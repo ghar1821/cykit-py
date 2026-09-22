@@ -25,8 +25,15 @@ __all__ = [
 _LN10 = np.log(10.0)
 
 
-def pad_range(lo: float, hi: float, frac: float = 0.02) -> tuple[float, float]:
-    """Widen a range slightly so points on the limit are not clipped by the frame.
+#: How much of the span to add beyond each end of an axis, by default. A
+#: population sitting against the edge of the data is the normal case in
+#: cytometry -- a negative peak at zero, a saturated one at the top of scale --
+#: and a tight frame cuts it in half. Matches matplotlib's own axis margin.
+AXIS_MARGIN = 0.05
+
+
+def pad_range(lo: float, hi: float, frac: float = AXIS_MARGIN) -> tuple[float, float]:
+    """Widen a range so points on the limit are not clipped by the frame.
 
     Parameters
     ----------
@@ -34,7 +41,7 @@ def pad_range(lo: float, hi: float, frac: float = 0.02) -> tuple[float, float]:
         The range to pad. A degenerate or non-finite range becomes a unit-wide
         one around ``lo``, because an axis has to have some extent.
     frac
-        Fraction of the span to add at each end.
+        Fraction of the span to add at each end; :data:`AXIS_MARGIN` by default.
 
     Returns
     -------
@@ -64,6 +71,76 @@ class Ticks:
     major: np.ndarray
     labels: list[str]
     minor: np.ndarray
+
+
+#: Roughly how many labelled ticks a linear axis aims for. The step is rounded
+#: to 1/2/5 x 10^k, so the count that comes out is between about four and nine.
+_LINEAR_TICKS = 6
+
+
+def _nice_step(span: float, target: int) -> tuple[float, int]:
+    """A round step dividing ``span`` into about ``target`` intervals.
+
+    Parameters
+    ----------
+    span
+        Width of the range to be ticked; must be positive and finite.
+    target
+        Number of intervals to aim for.
+
+    Returns
+    -------
+    tuple
+        ``(step, divisions)`` -- the step, one of 1, 2 or 5 times a power of
+        ten, and how many sub-steps of it a minor tick should split it into so
+        that the minor ticks also land on round numbers.
+    """
+    raw = span / max(target, 1)
+    magnitude = 10.0 ** np.floor(np.log10(raw))
+    for mult, divisions in ((1.0, 5), (2.0, 4), (5.0, 5), (10.0, 5)):
+        if raw <= magnitude * mult * (1 + 1e-9):
+            return magnitude * mult, divisions
+    return magnitude * 10.0, 5  # pragma: no cover - unreachable, raw < 10*magnitude
+
+
+def _multiples_within(step: float, lo: float, hi: float) -> np.ndarray:
+    """Every multiple of ``step`` inside ``[lo, hi]``, inclusive.
+
+    Built from integer multiples rather than :func:`numpy.arange` so that a
+    tick cannot drift off a round number, and so that none can fall outside
+    the range and be drawn beyond the edge of the plot.
+
+    Parameters
+    ----------
+    step
+        Spacing between ticks; must be positive.
+    lo, hi
+        The range to fill, in the same units as ``step``.
+
+    Returns
+    -------
+    ndarray
+        The multiples, ascending; empty when none fit.
+    """
+    tol = abs(step) * 1e-9
+    first = int(np.ceil((lo - tol) / step))
+    last = int(np.floor((hi + tol) / step))
+    if last < first:
+        return np.asarray([], dtype=float)
+    return np.arange(first, last + 1, dtype=float) * step
+
+
+def _linear_label(value: float, step: float) -> str:
+    """Format a linear tick with just enough decimals for ``step``.
+
+    Plain decimal throughout: an instrument range of 262144 reads better as
+    ``250000`` than as ``2.5e+05``, and ``%g`` would give the latter.
+    """
+    decimals = max(0, int(-np.floor(np.log10(step)))) if step > 0 else 0
+    value = round(float(value), decimals + 2)
+    if value == 0.0:
+        return "0"  # never "-0", which is what a rounded-down negative gives
+    return f"{value:.{decimals}f}"
 
 
 def _decade_label(exponent: int, negative: bool = False) -> str:
@@ -129,6 +206,43 @@ class Scale:
         """
         raise NotImplementedError
 
+    def to_raw(self, s: np.ndarray) -> np.ndarray:
+        """Display coordinates to the units the tick labels are written in.
+
+        Usually the same as :meth:`inverse`. It differs for
+        :class:`PretransformedScale`, whose ``inverse`` is the identity -- the
+        values are already transformed -- while its ticks are labelled in the
+        raw units they came from. Anything that puts an axis position in front
+        of a person, or takes one from them, wants this rather than
+        :meth:`inverse`.
+
+        Parameters
+        ----------
+        s
+            Display coordinates, any shape.
+
+        Returns
+        -------
+        ndarray
+            The same positions in tick-label units.
+        """
+        return self.inverse(s)
+
+    def from_raw(self, x: np.ndarray) -> np.ndarray:
+        """Tick-label units back to display coordinates. Inverts :meth:`to_raw`.
+
+        Parameters
+        ----------
+        x
+            Positions in tick-label units, any shape.
+
+        Returns
+        -------
+        ndarray
+            Display coordinates, same shape as ``x``.
+        """
+        return self.forward(x)
+
     def limits(
         self, x: np.ndarray, quantiles: tuple[float, float] = (0.0, 1.0)
     ) -> tuple[float, float]:
@@ -147,7 +261,8 @@ class Scale:
         Returns
         -------
         tuple of float
-            ``(lo, hi)`` in display coordinates, widened by 2% at each end.
+            ``(lo, hi)`` in display coordinates, widened by :data:`AXIS_MARGIN`
+            at each end.
             Degenerate input (all equal, or empty) still yields ``hi > lo``.
         """
         s = self.forward(np.asarray(x, dtype=float))
@@ -177,19 +292,19 @@ class LinearScale(Scale):
         return np.asarray(s, dtype=float)
 
     def ticks(self, lo, hi):
-        """Round ticks at a 1/2/5 x 10^k step, at most eight of them."""
+        """Round ticks at a 1/2/5 x 10^k step, about six of them, all within the range."""
         span = hi - lo
-        if span <= 0:
-            return Ticks(np.array([lo]), ["0"], np.array([]))
-        step = 10.0 ** np.floor(np.log10(span))
-        for mult in (1, 2, 5, 10):
-            if span / (step * mult) <= 8:
-                step *= mult
-                break
-        major = np.arange(np.ceil(lo / step) * step, hi + step * 0.5, step)
-        minor = np.arange(np.ceil(lo / (step / 5)) * (step / 5), hi, step / 5)
-        labels = [f"{v:g}" for v in major]
-        return Ticks(major, labels, minor)
+        if not np.isfinite(span) or span <= 0:
+            return Ticks(np.array([float(lo)]), [_linear_label(lo, 1.0)], np.array([]))
+        step, divisions = _nice_step(span, _LINEAR_TICKS)
+        major = _multiples_within(step, lo, hi)
+        minor = _multiples_within(step / divisions, lo, hi)
+        # Drop the sub-steps that land on a labelled tick, so the frame does
+        # not draw a short tick underneath every long one.
+        if minor.size:
+            on_major = np.isclose(minor[:, None], major[None, :], rtol=0.0, atol=step * 1e-6)
+            minor = minor[~on_major.any(axis=1)] if major.size else minor
+        return Ticks(major, [_linear_label(v, step) for v in major], minor)
 
 
 @dataclass
@@ -453,6 +568,14 @@ class PretransformedScale(Scale):
         """Decade ticks of ``inner``'s *raw* units, mirrored around zero."""
         d_lo, d_hi = self.inner.inverse(np.array([lo, hi]))
         return _biex_ticks(self.inner.forward, float(d_lo), float(d_hi), lo, hi)
+
+    def to_raw(self, s):
+        """Display coordinates to the original units, through ``inner``."""
+        return self.inner.inverse(np.asarray(s, dtype=float))
+
+    def from_raw(self, x):
+        """The original units back to display coordinates, through ``inner``."""
+        return self.inner.forward(np.asarray(x, dtype=float))
 
 
 def _biex_ticks(forward, d_lo: float, d_hi: float, lo: float, hi: float) -> Ticks:

@@ -379,3 +379,56 @@ def test_over_compensation_pulls_the_population_below_the_line(controls):
     assert abs(worse.loc["CD3 (FITC-A)", "CD19 (PE-A)"]) > abs(
         good.loc["CD3 (FITC-A)", "CD19 (PE-A)"]
     )
+
+
+# --------------------------------------------------------------------------
+# axis_limits: an untransformed channel spans its detector, not this sample
+# --------------------------------------------------------------------------
+def test_untransformed_channels_span_the_instrument_range(demo):
+    """FSC and SSC share a $PnR, so the scatter plot comes out square."""
+    import numpy as np
+
+    from cytopy.plotting import axis_limits
+
+    x = axis_limits(demo, "FSC-A", "X", np.asarray(demo[:, "FSC-A"].X).ravel())
+    y = axis_limits(demo, "SSC-A", "X", np.asarray(demo[:, "SSC-A"].X).ravel())
+    assert x == y
+    top = float(demo.var["pnr"].iloc[0])
+    assert x[0] < 0.0 < top < x[1]  # the padded [0, $PnR]
+
+
+def test_transformed_channels_still_span_the_data(demo):
+    """The instrument range means nothing once a channel has been arcsinh'd."""
+    import numpy as np
+
+    import cytopy
+    from cytopy.plotting import axis_limits
+
+    cytopy.asinh_transform(demo, 150.0, layer="X", inplace=True)
+    values = np.asarray(demo[:, "CD3 (FITC-A)"].layers["asinh"]).ravel()
+    _, hi = axis_limits(demo, "CD3 (FITC-A)", "asinh", values)
+    assert hi < 20.0  # arcsinh units, nowhere near $PnR
+
+
+def test_data_outside_the_instrument_range_is_not_clipped(demo):
+    """Compensation pushes events negative; hiding them would be the worse bug."""
+    import numpy as np
+
+    from cytopy.plotting import axis_limits
+
+    values = np.asarray(demo[:, "FSC-A"].X).ravel().copy()
+    values[:1000] = -50_000.0
+    lo, _ = axis_limits(demo, "FSC-A", "X", values)
+    assert lo < -50_000.0
+
+
+def test_an_anndata_without_pnr_falls_back_to_the_data(demo):
+    """Nothing here requires the object to have come from an FCS file."""
+    import numpy as np
+
+    from cytopy.plotting import axis_limits
+
+    del demo.var["pnr"]
+    values = np.asarray(demo[:, "FSC-A"].X).ravel()
+    _, hi = axis_limits(demo, "FSC-A", "X", values)
+    assert hi < float(values.max()) * 1.05

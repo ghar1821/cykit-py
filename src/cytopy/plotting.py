@@ -82,6 +82,86 @@ def axis_scale(adata: ad.AnnData, channel: str, layer: str | None) -> Scale:
     return LinearScale()
 
 
+def instrument_range(adata: ad.AnnData, channel: str) -> tuple[float, float] | None:
+    """The detector's full range for ``channel``, from the FCS ``$PnR`` keyword.
+
+    Parameters
+    ----------
+    adata
+        The AnnData; ``adata.var['pnr']`` is written by :func:`~cytopy.read_fcs`.
+    channel
+        Channel to look up.
+
+    Returns
+    -------
+    tuple of float or None
+        ``(0.0, pnr)``, or ``None`` when the file recorded no usable range --
+        an AnnData built by hand, or a ``$PnR`` that is missing, non-numeric or
+        not positive.
+    """
+    if "pnr" not in adata.var:
+        return None
+    try:
+        top = float(adata.var["pnr"].iloc[channel_index(adata, channel)])
+    except (TypeError, ValueError):
+        return None
+    if not np.isfinite(top) or top <= 0:
+        return None
+    return (0.0, top)
+
+
+def axis_limits(
+    adata: ad.AnnData,
+    channel: str,
+    layer: str | None,
+    values: np.ndarray,
+    *,
+    robust: bool = True,
+) -> tuple[float, float]:
+    """Display-coordinate range for an axis. The same rule the viewer uses.
+
+    A channel the layer never transformed keeps its raw instrument units, and
+    those have a range the file already states: ``$PnR``. Using it means the
+    scatter channels -- which share a ``$PnR`` -- get identical axes, the way a
+    cytometrist expects an FSC/SSC plot to look, and that the ticks land on
+    round numbers spanning the detector rather than on whatever this particular
+    sample happened to reach.
+
+    Anything else, including every transformed axis, falls back to the spread
+    of the data. So does a linear channel whose values do not fit in ``[0,
+    $PnR]``: compensation pushes events negative, and clipping those off the
+    bottom of the plot would hide them.
+
+    Parameters
+    ----------
+    adata
+        The AnnData being plotted.
+    channel
+        Channel on the axis.
+    layer
+        Layer being plotted; ``None``, ``""`` and ``"X"`` all mean ``adata.X``.
+    values
+        The values to be shown on this axis, as stored in ``layer``.
+    robust
+        Clip the fallback range to the 0.1-99.9th percentile, so that a handful
+        of extreme events cannot flatten the plot.
+
+    Returns
+    -------
+    tuple of float
+        ``(lo, hi)`` in display coordinates, padded slightly at each end.
+    """
+    scale = axis_scale(adata, channel, layer)
+    quantiles = (0.001, 0.999) if robust else (0.0, 1.0)
+    fallback = scale.limits(values, quantiles=quantiles)
+    if not isinstance(scale, LinearScale):
+        return fallback
+    span = instrument_range(adata, channel)
+    if span is None or fallback[0] < span[0] or fallback[1] > span[1]:
+        return fallback
+    return pad_range(*span)
+
+
 def _apply_ticks(axis, scale: Scale, lo: float, hi: float, which: str) -> None:
     ticks = scale.ticks(lo, hi)
     setter = axis.set_xticks if which == "x" else axis.set_yticks
@@ -204,19 +284,26 @@ def plot_biaxial(
     else:
         x_scale = axis_scale(adata, x_name, layer)
         y_scale = axis_scale(adata, y_name, layer)
+    # A display-only cofactor puts both axes on a scale `adata` knows nothing
+    # about, so the instrument range that `axis_limits` would reach for does
+    # not apply; the transformed values are all there is to go on.
     quantiles = (0.001, 0.999) if robust else (0.0, 1.0)
     if xlim is not None:
         x_lo, x_hi = xlim
     elif xv.size == 0:
         x_lo, x_hi = 0.0, 1.0
-    else:
+    elif cofactor is not None:
         x_lo, x_hi = x_scale.limits(xv, quantiles=quantiles)
+    else:
+        x_lo, x_hi = axis_limits(adata, x_name, layer, xv, robust=robust)
     if ylim is not None:
         y_lo, y_hi = ylim
     elif yv.size == 0:
         y_lo, y_hi = 0.0, 1.0
-    else:
+    elif cofactor is not None:
         y_lo, y_hi = y_scale.limits(yv, quantiles=quantiles)
+    else:
+        y_lo, y_hi = axis_limits(adata, y_name, layer, yv, robust=robust)
     axes2d = Axes2D(x_lo, x_hi, y_lo, y_hi, bins=bins)
 
     highlight = None

@@ -207,6 +207,15 @@ hit the same walls elsewhere:
 * **Never widen the matrix.** Intermediates are computed at the storage dtype
   and written a column at a time; a `float64` copy of everything was over 4 GB
   at 46 channels.
+* **arcsinh is monotone, so percentiles do not need recomputing.** The cofactor
+  window takes each channel's quantiles once, on the raw values, and transforms
+  *those* rather than re-percentiling a million transformed values on every
+  slider tick. It saves ~9 ms a tick, but the real point is that the axis stays
+  pinned to fixed raw values instead of shifting under the population as you
+  drag.
+* **Transform in the storage dtype.** `np.arcsinh` on a million `float32` values
+  is 3.3 ms; on `float64` it is 11.2 ms. On a slider that fires forty times a
+  second, that is the difference between live and not.
 
 ### Nothing is modified unless you say so
 
@@ -234,6 +243,71 @@ arcsinh layer into a plot that reads as biexponential.
 So `layers["asinh"]` gets an axis marked `-10² 0 10² 10³ 10⁴`, while plotting
 raw `X` gets plain linear ticks. Set **axis ticks** to `linear` to see the
 stored numbers instead.
+
+### Choosing cofactors
+
+Nothing will choose a cofactor for you, and no default is going to be right for
+a 40-channel spectral panel. `open_napari_transform` opens a window that shows
+what a cofactor *does* — the two channels against each other, and a distribution
+of each with its own slider — and hands back a dict. It writes nothing to the
+AnnData; applying the answer is still your own `asinh_transform`.
+
+```python
+estimate = cytopy.estimate_cofactors(adata, layer="comp")   # a starting point, not an answer
+
+cofactors = cytopy.open_napari_transform(
+    adata, "comp", cofactor_range=(100, 20_000), estimate=estimate,
+)
+cofactors
+# {
+#     'CD4 (BV421-A)': 1200,
+#     'CD8 (BV510-A)': 3000,
+# }
+
+cytopy.asinh_transform(adata, cofactors, layer="comp", inplace=True)
+```
+
+Note that `layer` here is the **untransformed** matrix, unlike `open_napari`,
+which is pointed at a layer you have already transformed. This window does the
+arcsinh itself.
+
+`cofactor_range` is required, because it is the judgement the tool cannot make
+for you: it is your prior on where the answer lives, and it is what the slider's
+resolution is spent on. The slider is log-spaced across it — a cofactor is a
+scale parameter, so 100→200 is the same step as 3000→6000 — which means
+**narrowing the range is how you get finer control**.
+
+Two things make forty channels tractable:
+
+* **Every channel is seeded before you touch anything**, at the geometric
+  midpoint of your range. Nothing is ever unset, so moving between channels
+  cannot lose a decision. Channels you have moved are marked `●` in the list,
+  the rest `○`, and **set every untouched channel to this** fills in the `○`
+  ones without touching the `●` ones. The real workflow is to settle the bulk
+  value on two or three channels, apply it to the rest, then go hunting for the
+  handful that are wrong.
+* **`n` and `p` step through the panel** in file order, so confirming a channel
+  is one keystroke.
+
+The y axis defaults to a scatter channel and its slider is greyed out, because
+scatter is never transformed. One axis moves at a time, so a change in the
+picture is attributable to the slider you moved. Pick a fluorescence channel
+there and its slider comes alive.
+
+Two things on the canvas read a cofactor at a glance. The vertical **knee line**
+sits at the raw value equal to the cofactor, where the arcsinh stops being
+linear; it never moves, and the data slides under it, so the judgement is
+"negatives comfortably left of the line, positives spread out to its right". The
+shaded **band** is the spread of the negative population, which visibly widens as
+you lower the cofactor. Below it the status line reports that spread, the
+separation between the negatives and the bright tail, and what fraction of
+events are negative at all — a channel with fewer than 50 negative events says
+so outright, because there is nothing there for a cofactor to sit on.
+
+Press **copy as a Python dict** and paste the literal into your notebook. The
+return value works too, but it lives in the memory of a kernel you will restart;
+the literal is a record of what you decided, and it makes the notebook
+re-runnable without the window.
 
 ### Several files at once
 

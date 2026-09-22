@@ -14,7 +14,7 @@ import pytest
 SRC = pathlib.Path(__file__).resolve().parents[1] / "src" / "cytopy"
 
 # Methods whose parameters are documented once, on cytopy.scales.Scale.
-INHERITED = {"forward", "inverse", "ticks", "limits", "__call__"}
+INHERITED = {"forward", "inverse", "ticks", "limits", "to_raw", "from_raw", "__call__"}
 
 
 def _documented(doc: str) -> set[str] | None:

@@ -7,6 +7,11 @@ transform *you* ran (:func:`cytopy.asinh_transform`,
 *label* the axes: when a layer records the transform that produced it, the
 ticks are drawn as decades of the original units, which is what makes an
 arcsinh or logicle layer read as a biexponential plot.
+
+That is the contract of :class:`CytoViewer`, and it is the reason there is a
+separate window for *choosing* a cofactor: :mod:`cytopy.cofactors` arcsinhs what
+it draws, but only for display, in memory, and it hands back numbers rather than
+a layer -- the same standing ``plot_biaxial(..., cofactor=...)`` has.
 """
 
 from __future__ import annotations
@@ -22,7 +27,7 @@ import pandas as pd
 
 from .density import Axes2D, density_curve, density_image
 from .gating import add_gate, gate_children, gate_record, recompute_gates, shapes_mask
-from .plotting import axis_scale
+from .plotting import axis_limits, axis_scale
 from .scales import LinearScale, Scale
 from .transforms import channel_index
 
@@ -36,6 +41,11 @@ __all__ = [
 ]
 
 TICK_CHOICES = ["auto", "linear"]
+
+#: Shape of the four axis-range spin boxes. The bounds are a formality -- wide
+#: enough for any instrument range or transformed value, so that the widget
+#: never refuses a number the axis could legitimately show.
+_LIMIT_FIELD = {"min": -1e12, "max": 1e12, "step": 1.0}
 COLORMAPS = ["turbo", "viridis", "magma", "inferno", "gray", "plasma"]
 
 #: Canvas background. White by default: a density plot reads as a flow plot on
@@ -116,6 +126,13 @@ class Panel:
         Position of the panel's top-left corner, in bin units.
     colormap
         Colormap for the density image.
+
+    Attributes
+    ----------
+    x_lim, y_lim
+        Manual axis ranges in display coordinates, or ``None`` to fit the data.
+        Set from the window's min/max fields; see
+        :meth:`CytoViewer.set_limits`.
     """
 
     def __init__(
@@ -129,6 +146,8 @@ class Panel:
         y: str = "",
         samples: Sequence[str] = (),
         parent: str = "<none>",
+        row: float = 0.0,
+        col: float = 0.0,
         colormap: str = "turbo",
     ):
         self.index = int(index)
@@ -138,10 +157,19 @@ class Panel:
         self.y = y
         self.samples = tuple(samples)
         self.parent = parent
+        # Where the panel's top-left corner sits, in bin units. Zero for a
+        # window showing one plot; the cofactor window stacks three.
+        self.row = float(row)
+        self.col = float(col)
 
         self.axes: Axes2D | None = None
         self.x_scale: Scale | None = None
         self.y_scale: Scale | None = None
+        # Manual axis ranges, in display coordinates. `None` means the panel
+        # works them out from the data, which is what it does until someone
+        # types into the min/max fields.
+        self.x_lim: tuple[float, float] | None = None
+        self.y_lim: tuple[float, float] | None = None
         self.peak = 0.0
         self.legend: list[tuple[float, float, str]] = []
 
@@ -415,6 +443,18 @@ class CytoViewer:
         self.w_swap = PushButton(text="swap x / y")
         self.w_ticks = ComboBox(label="axis ticks", choices=TICK_CHOICES, value=ticks)
         self.w_transform = Label(value="")
+        # Axis range, in the units the ticks are labelled in -- raw ones on a
+        # transformed axis -- because those are the numbers on the screen next
+        # to the field. They read back the range in use until "apply" pins
+        # them, and "fit" hands the axes back to the data. Applied on a button
+        # rather than on each edit: a spin box emits per keystroke, so typing
+        # "262144" would otherwise redraw at 2, then 26, then 262.
+        self.w_xmin = FloatSpinBox(label="x min", **_LIMIT_FIELD)
+        self.w_xmax = FloatSpinBox(label="x max", **_LIMIT_FIELD)
+        self.w_ymin = FloatSpinBox(label="y min", **_LIMIT_FIELD)
+        self.w_ymax = FloatSpinBox(label="y max", **_LIMIT_FIELD)
+        self.w_limits_apply = PushButton(text="apply range")
+        self.w_autoscale = PushButton(text="fit axes to data")
         samples = (
             [str(v) for v in self.adata.obs["sample"].astype(str).unique()]
             if "sample" in self.adata.obs
@@ -463,6 +503,17 @@ class CytoViewer:
             ],
             label="plot",
         )
+        limits = Container(
+            widgets=[
+                self.w_xmin,
+                self.w_xmax,
+                self.w_ymin,
+                self.w_ymax,
+                self.w_limits_apply,
+                self.w_autoscale,
+            ],
+            label="axis range",
+        )
         style = Container(
             widgets=[
                 self.w_bins,
@@ -485,7 +536,7 @@ class CytoViewer:
             ],
             label="gating",
         )
-        sections = [plot, style, gate]
+        sections = [plot, limits, style, gate]
         self.widget = Container(widgets=[*sections, self.w_status])
 
         # Per-panel settings write to the active panel, then redraw.
@@ -506,6 +557,8 @@ class CytoViewer:
             self.w_lock,
         ):
             w.changed.connect(self._on_change)
+        self.w_limits_apply.changed.connect(self._limits_changed)
+        self.w_autoscale.changed.connect(self._autoscale_clicked)
         self.w_cmap.changed.connect(self._on_change)
         self.w_background.changed.connect(lambda e: self.set_background(self.w_background.value))
         self.w_swap.changed.connect(self._swap)
@@ -571,17 +624,89 @@ class CytoViewer:
         self._bind()
         self.refresh()
 
+    def set_limits(
+        self,
+        x: tuple[float, float] | None = None,
+        y: tuple[float, float] | None = None,
+    ) -> None:
+        """Pin the active panel's axis range, or hand it back to the data.
+
+        Values are in the units the ticks are labelled in -- raw ones on a
+        transformed axis, so ``x=(0, 200000)`` means what it says on an FSC
+        axis and ``x=(-100, 10000)`` means what it says on an arcsinh one.
+
+        Parameters
+        ----------
+        x, y
+            ``(min, max)`` for that axis, or ``None`` to leave it alone.
+            Pass ``(0, 0)`` -- any empty or inverted range -- to put the axis
+            back on automatic. A histogram's vertical axis is per cent of mode
+            and ignores ``y``.
+
+        Examples
+        --------
+        >>> cv.set_limits(x=(0, 262144), y=(0, 262144))  # doctest: +SKIP
+        >>> cv.set_limits(x=(0, 0))  # back to fitting the data  # doctest: +SKIP
+        """
+        panel = self.panel
+        if x is not None:
+            panel.x_lim = _display_range(panel.x_scale, x)
+        if y is not None:
+            panel.y_lim = _display_range(panel.y_scale, y)
+        self.refresh()
+
+    def _limits_changed(self, *_) -> None:
+        """Copy the min/max fields onto the active panel."""
+        self.set_limits(
+            x=(float(self.w_xmin.value), float(self.w_xmax.value)),
+            y=(float(self.w_ymin.value), float(self.w_ymax.value)),
+        )
+
+    def _autoscale_clicked(self, *_) -> None:
+        """Drop both manual ranges and refit to the data."""
+        self.panel.x_lim = None
+        self.panel.y_lim = None
+        self.refresh()
+
+    def _show_limits(self) -> None:
+        """Write the range actually on screen into the min/max fields.
+
+        They are a readout as much as an input: after a channel change or a
+        refit they have to show where the axes ended up, or the next edit sends
+        the plot somewhere nobody asked for.
+        """
+        panel = self.panel
+        axes = panel.axes
+        if axes is None:
+            return
+        x_lo, x_hi = _raw_range(panel.x_scale, (axes.x_lo, axes.x_hi))
+        with self._quiet():
+            self.w_xmin.value, self.w_xmax.value = x_lo, x_hi
+            if panel.histogram:
+                self.w_ymin.value, self.w_ymax.value = 0.0, float(_MODE_TOP)
+            else:
+                self.w_ymin.value, self.w_ymax.value = _raw_range(
+                    panel.y_scale, (axes.y_lo, axes.y_hi)
+                )
+
     def _panel_changed(self, *_) -> None:
         """Copy the per-panel widgets onto the active panel."""
         if self._updating:
             return
         panel = self.panel
+        previous_x, previous_y, previous_layer = panel.x, panel.y, panel.layer
         panel.kind = str(self.w_plot.value)
         panel.layer = str(self.w_layer.value)
         panel.x = str(self.w_x.value)
         panel.y = str(self.w_y.value)
         panel.samples = tuple(str(v) for v in self.w_samples.value)
         panel.parent = str(self.w_parent.value)
+        # A range typed for one channel means nothing on another, and a layer
+        # change moves the units under it too.
+        if (panel.x, panel.layer) != (previous_x, previous_layer):
+            panel.x_lim = None
+        if (panel.y, panel.layer) != (previous_y, previous_layer):
+            panel.y_lim = None
         self.refresh()
 
     # ------------------------------------------------------------ appearance
@@ -655,17 +780,19 @@ class CytoViewer:
         return ["<none>"] + bools
 
     # ------------------------------------------------------------------ axes
-    def _limits(self, scale: Scale, values: np.ndarray) -> tuple[float, float]:
-        """Axis range for these values.
+    def _limits(self, channel: str, values: np.ndarray, layer: str) -> tuple[float, float]:
+        """Axis range for ``channel``.
 
-        Clipped to the 0.1-99.9th percentile unless the viewer was built with
-        ``robust=False``. Without it a single extreme event -- and compensation
-        makes those -- stretches the axis until everything else is a dot in the
-        corner. It is not a setting because there is no sensible reason to turn
-        it off from the window.
+        The rule lives in :func:`~cytopy.axis_limits`, so the window and the
+        static figures cannot come to disagree about an axis: an untransformed
+        channel spans its detector's full ``$PnR``, and everything else spans
+        the data, clipped to the 0.1-99.9th percentile unless the viewer was
+        built with ``robust=False``. Without that clipping a single extreme
+        event -- and compensation makes those -- stretches the axis until
+        everything else is a dot in the corner. It is not a setting because
+        there is no sensible reason to turn it off from the window.
         """
-        q = (0.001, 0.999) if self._robust else (0.0, 1.0)
-        return scale.limits(values, quantiles=q)
+        return axis_limits(self.adata, channel, layer, values, robust=self._robust)
 
     # ------------------------------------------------------------------- data
     def _matrix(self, layer: str):
@@ -854,6 +981,7 @@ class CytoViewer:
 
         self._draw_applied_gates()
         self._draw_axes()
+        self._show_limits()
         self.w_status.value = self._status()
 
     def _draw_panel(self, panel: Panel) -> None:
@@ -874,11 +1002,17 @@ class CytoViewer:
         scope = mask
         if self.w_lock.value and panel.samples:
             scope = self.selection_mask(sample=False)
-        x_lo, x_hi = self._limits(panel.x_scale, self._column(panel.x, scope, panel.layer))
+        x_lo, x_hi = panel.x_lim or self._limits(
+            panel.x, self._column(panel.x, scope, panel.layer), panel.layer
+        )
         if panel.histogram:
+            # The vertical axis is per cent of mode, not a channel, so there is
+            # nothing for a manual range to mean.
             y_lo, y_hi = 0.0, 1.0
         else:
-            y_lo, y_hi = self._limits(panel.y_scale, self._column(panel.y, scope, panel.layer))
+            y_lo, y_hi = panel.y_lim or self._limits(
+                panel.y, self._column(panel.y, scope, panel.layer), panel.layer
+            )
         panel.axes = Axes2D(x_lo, x_hi, y_lo, y_hi, bins=self.bins)
 
         if panel.histogram:
@@ -973,6 +1107,9 @@ class CytoViewer:
         histogram = self.panel.histogram
         for widget in (self.w_y, self.w_swap, self.w_log, self.w_cmap):
             widget.enabled = not histogram
+        # A histogram's vertical axis is a fixed per-cent-of-mode scale.
+        for widget in (self.w_ymin, self.w_ymax):
+            widget.enabled = not histogram
 
     def _draw_axes(self) -> None:
         """Draw a labelled frame around every panel, and the colour bar's ticks."""
@@ -981,52 +1118,26 @@ class CytoViewer:
         lines: list[np.ndarray] = []
         coords: list[list[float]] = []
         text: list[str] = []
+        y_label = ""
         panel = self.panel
         ax = panel.axes
         if ax is not None:
-            dr = dc = 0.0
-            lines += [
-                np.array([[dr - 0.5, dc - 0.5], [dr - 0.5, dc + b - 0.5]]),
-                np.array([[dr + b - 0.5, dc - 0.5], [dr + b - 0.5, dc + b - 0.5]]),
-                np.array([[dr - 0.5, dc - 0.5], [dr + b - 0.5, dc - 0.5]]),
-                np.array([[dr - 0.5, dc + b - 0.5], [dr + b - 0.5, dc + b - 0.5]]),
-            ]
-            xt = panel.x_scale.ticks(ax.x_lo, ax.x_hi)
-            for pos, lab in zip(xt.major, xt.labels):
-                col = dc + ax.to_pixels(np.array([pos]), np.array([ax.y_lo]))[0, 1]
-                lines.append(np.array([[dr + b - 0.5, col], [dr + b - 0.5 + tick, col]]))
-                coords.append([dr + b + 3.0 * tick, col])
-                text.append(lab)
-            for pos in xt.minor:
-                col = dc + ax.to_pixels(np.array([pos]), np.array([ax.y_lo]))[0, 1]
-                lines.append(np.array([[dr + b - 0.5, col], [dr + b - 0.5 + tick / 2, col]]))
-            coords.append([dr + b + 8.0 * tick, dc + b / 2.0])
-            text.append(str(panel.x))
-            coords.append([dr - 3.5 * tick, dc + b / 2.0])
-            text.append(panel.title)
-
+            lines, coords, text, y_label = _panel_frame(
+                ax,
+                x_scale=panel.x_scale,
+                y_scale=panel.y_scale,
+                bins=b,
+                row=panel.row,
+                col=panel.col,
+                x_label=str(panel.x),
+                y_label=str(panel.y),
+                title=panel.title,
+                mode_axis=panel.histogram,
+            )
             if panel.histogram:
-                # The y axis is a density, not a channel.
-                for fraction in (0.0, 0.25, 0.5, 0.75, 1.0):
-                    row = dr + (b - 1) - fraction * (b - 1) / 1.05
-                    lines.append(np.array([[row, dc - 0.5], [row, dc - 0.5 - tick]]))
-                    coords.append([row, dc - 4.0 * tick])
-                    text.append(f"{round(fraction * _MODE_TOP)}")
-                y_label = "% of mode"
                 for row, col, label in panel.legend:
                     coords.append([row, col])
                     text.append(label)
-            else:
-                yt = panel.y_scale.ticks(ax.y_lo, ax.y_hi)
-                for pos, lab in zip(yt.major, yt.labels):
-                    row = dr + ax.to_pixels(np.array([ax.x_lo]), np.array([pos]))[0, 0]
-                    lines.append(np.array([[row, dc - 0.5], [row, dc - 0.5 - tick]]))
-                    coords.append([row, dc - 4.0 * tick])
-                    text.append(lab)
-                for pos in yt.minor:
-                    row = dr + ax.to_pixels(np.array([ax.x_lo]), np.array([pos]))[0, 0]
-                    lines.append(np.array([[row, dc - 0.5], [row, dc - 0.5 - tick / 2]]))
-                y_label = str(panel.y)
 
         colours = [self._foreground] * len(text)
         for row, col, label in getattr(self, "_gate_labels", []):
@@ -1469,6 +1580,125 @@ def _is_light(colour) -> bool:
 
     red, green, blue = transform_color(colour)[0][:3]
     return float(0.2126 * red + 0.7152 * green + 0.0722 * blue) > 0.5
+
+
+def _raw_range(scale: Scale | None, span: tuple[float, float]) -> tuple[float, float]:
+    """A display-coordinate range in the units the ticks are labelled in."""
+    if scale is None:
+        return (float(span[0]), float(span[1]))
+    lo, hi = scale.to_raw(np.asarray(span, dtype=float))
+    return (float(lo), float(hi))
+
+
+def _display_range(scale: Scale | None, span: tuple[float, float]) -> tuple[float, float] | None:
+    """A typed ``(min, max)`` in display coordinates, or ``None`` for automatic.
+
+    An empty, inverted or non-finite range is how the window says "fit the
+    data": there is no useful axis it could mean, and a field cleared to zero
+    should not leave the plot stuck on a sliver.
+    """
+    lo, hi = float(span[0]), float(span[1])
+    if not np.isfinite(lo) or not np.isfinite(hi) or hi <= lo:
+        return None
+    if scale is not None:
+        lo, hi = (float(v) for v in scale.from_raw(np.asarray([lo, hi], dtype=float)))
+    if not np.isfinite(lo) or not np.isfinite(hi) or hi <= lo:
+        return None
+    return (lo, hi)
+
+
+def _panel_frame(
+    axes: Axes2D,
+    *,
+    x_scale: Scale,
+    y_scale: Scale | None,
+    bins: int,
+    row: float = 0.0,
+    col: float = 0.0,
+    x_label: str = "",
+    y_label: str = "",
+    title: str = "",
+    mode_axis: bool = False,
+) -> tuple[list[np.ndarray], list[list[float]], list[str], str]:
+    """The labelled box around one panel, in canvas coordinates.
+
+    Pure geometry, so both windows draw an axis the same way and cannot come to
+    disagree about where a tick goes. ``row`` and ``col`` offset the whole frame,
+    which is what lets several panels share a canvas.
+
+    Parameters
+    ----------
+    axes
+        Extent of the panel, mapping display coordinates to pixels.
+    x_scale
+        Scale placing the ticks along the bottom.
+    y_scale
+        Scale placing the ticks up the side. Unused when ``mode_axis`` is set.
+    bins
+        Side of the panel, in pixels.
+    row, col
+        Where the panel's top-left corner sits, in the same pixel units.
+    x_label, y_label
+        Axis names. ``y_label`` is ignored when ``mode_axis`` is set.
+    title
+        Heading drawn above the panel.
+    mode_axis
+        Label the vertical axis as per cent of mode rather than as a channel,
+        which is what a histogram panel wants.
+
+    Returns
+    -------
+    tuple
+        ``(lines, coords, text, y_label)`` -- the frame and tick segments, the
+        label positions, the label strings, and the name for the rotated y-axis
+        label, which its caller draws on a layer of its own.
+    """
+    tick = 0.02 * bins
+    lines: list[np.ndarray] = []
+    coords: list[list[float]] = []
+    text: list[str] = []
+    dr, dc = float(row), float(col)
+    b = bins
+
+    lines += [
+        np.array([[dr - 0.5, dc - 0.5], [dr - 0.5, dc + b - 0.5]]),
+        np.array([[dr + b - 0.5, dc - 0.5], [dr + b - 0.5, dc + b - 0.5]]),
+        np.array([[dr - 0.5, dc - 0.5], [dr + b - 0.5, dc - 0.5]]),
+        np.array([[dr - 0.5, dc + b - 0.5], [dr + b - 0.5, dc + b - 0.5]]),
+    ]
+    xt = x_scale.ticks(axes.x_lo, axes.x_hi)
+    for pos, lab in zip(xt.major, xt.labels):
+        c = dc + axes.to_pixels(np.array([pos]), np.array([axes.y_lo]))[0, 1]
+        lines.append(np.array([[dr + b - 0.5, c], [dr + b - 0.5 + tick, c]]))
+        coords.append([dr + b + 3.0 * tick, c])
+        text.append(lab)
+    for pos in xt.minor:
+        c = dc + axes.to_pixels(np.array([pos]), np.array([axes.y_lo]))[0, 1]
+        lines.append(np.array([[dr + b - 0.5, c], [dr + b - 0.5 + tick / 2, c]]))
+    coords.append([dr + b + 8.0 * tick, dc + b / 2.0])
+    text.append(x_label)
+    coords.append([dr - 3.5 * tick, dc + b / 2.0])
+    text.append(title)
+
+    if mode_axis:
+        # The y axis is a density, not a channel.
+        for fraction in (0.0, 0.25, 0.5, 0.75, 1.0):
+            r = dr + (b - 1) - fraction * (b - 1) / 1.05
+            lines.append(np.array([[r, dc - 0.5], [r, dc - 0.5 - tick]]))
+            coords.append([r, dc - 4.0 * tick])
+            text.append(f"{round(fraction * _MODE_TOP)}")
+        return lines, coords, text, "% of mode"
+
+    yt = y_scale.ticks(axes.y_lo, axes.y_hi)
+    for pos, lab in zip(yt.major, yt.labels):
+        r = dr + axes.to_pixels(np.array([axes.x_lo]), np.array([pos]))[0, 0]
+        lines.append(np.array([[r, dc - 0.5], [r, dc - 0.5 - tick]]))
+        coords.append([r, dc - 4.0 * tick])
+        text.append(lab)
+    for pos in yt.minor:
+        r = dr + axes.to_pixels(np.array([axes.x_lo]), np.array([pos]))[0, 0]
+        lines.append(np.array([[r, dc - 0.5], [r, dc - 0.5 - tick / 2]]))
+    return lines, coords, text, y_label
 
 
 def faded_colormap(name: str, fade: float = _FADE):

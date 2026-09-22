@@ -312,3 +312,22 @@ def test_filter_events_keeps_copy_because_it_cannot_work_in_place(demo):
     params = inspect.signature(cytopy.filter_events).parameters
     assert "copy" in params and "inplace" not in params
     assert params["copy"].default is True
+
+
+# --------------------------------------------------------------------------
+# axis limits: plotting.axis_limits vs CytoViewer._limits
+# --------------------------------------------------------------------------
+def test_viewer_and_plotting_agree_on_axis_limits(demo, make_napari_viewer):
+    """Same rule, one function: an FSC/SSC panel is square in both."""
+    pytest.importorskip("napari")
+    import cytopy
+    from cytopy.plotting import axis_limits
+    from cytopy.viewer import CytoViewer
+
+    cytopy.asinh_transform(demo, 150.0, layer="X", inplace=True)
+    cv = CytoViewer(demo, layer="asinh", x="FSC-A", y="SSC-A", bins=64, viewer=make_napari_viewer())
+    axes = cv.panel.axes
+    values = np.asarray(demo[:, "FSC-A"].layers["asinh"]).ravel()
+    assert (axes.x_lo, axes.x_hi) == axis_limits(demo, "FSC-A", "asinh", values)
+    # Untransformed scatter: both axes end up on the shared instrument range.
+    assert (axes.x_lo, axes.x_hi) == (axes.y_lo, axes.y_hi)

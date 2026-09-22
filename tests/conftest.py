@@ -60,7 +60,7 @@ def _close_figures():
 
 @pytest.fixture(autouse=True)
 def _close_open_napari_window():
-    """Shut any window ``open_napari`` left behind.
+    """Shut any window ``open_napari`` or ``open_napari_transform`` left behind.
 
     It deliberately holds a module-level reference so a non-blocking call in a
     notebook does not let the window be collected. Left in place between tests
@@ -72,8 +72,11 @@ def _close_open_napari_window():
         from cytopy import viewer
     except ImportError:  # pragma: no cover - napari not installed
         return
-    current = getattr(viewer, "_CURRENT", None)
-    if current is not None:
-        viewer._CURRENT = None
-        with contextlib.suppress(Exception):
-            current.viewer.close()
+    from cytopy import cofactors
+
+    for module, attr in ((viewer, "_CURRENT"), (cofactors, "_CURRENT_TRANSFORM")):
+        current = getattr(module, attr, None)
+        if current is not None:
+            setattr(module, attr, None)
+            with contextlib.suppress(Exception):
+                current.viewer.close()

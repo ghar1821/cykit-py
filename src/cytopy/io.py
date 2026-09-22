@@ -22,6 +22,24 @@ _SCATTER_RE = re.compile(r"^(fsc|ssc|bsc)[-_ ]?", re.IGNORECASE)
 _TIME_RE = re.compile(r"^time$", re.IGNORECASE)
 
 
+def _sanitise_var_name(name: str) -> str:
+    """Strip characters HDF5 reads as path separators out of a channel name.
+
+    A ``/`` in a var name does not break the index itself -- that is written
+    as a plain string array -- but cytopy keys several ``uns`` dicts by
+    channel name (``logicle_params``, ``asinh_layers``), and those keys become
+    HDF5 names on write, where ``/`` means "subgroup". Writing the object then
+    either nests the entry under a group that nothing reads back or fails
+    outright. Imaging panels hit this: the S8 writes parameters such as
+    ``Delta CoM (SSC (Imaging)/FSC)``.
+
+    The original stays in ``var['channel']`` and ``var['label']``, and
+    :func:`~cytopy.transforms.channel_index` still resolves against both, so
+    looking a channel up by the name the file used keeps working.
+    """
+    return name.replace("/", "_")
+
+
 def _channel_kind(pnn: str) -> str:
     if _TIME_RE.match(pnn.strip()):
         return "time"
@@ -68,7 +86,9 @@ def _build_var(flow_data, channel_count: int) -> pd.DataFrame:
         )
     var = pd.DataFrame(rows)
     # Index on the human-readable label; de-duplicate defensively.
-    labels = var["label"].tolist()
+    # Sanitise before de-duplicating, so two labels that differ only in a
+    # character that sanitising removes still end up with distinct names.
+    labels = [_sanitise_var_name(lab) for lab in var["label"]]
     seen: dict[str, int] = {}
     unique = []
     for lab in labels:

@@ -53,6 +53,8 @@ __version__ = "0.0.1-alpha"
 __all__ = [
     "AsinhScale",
     "Axes2D",
+    "CofactorWindow",
+    "Cofactors",
     "CytoViewer",
     "GateRecord",
     "LinearScale",
@@ -69,6 +71,7 @@ __all__ = [
     "compensation_residuals",
     "compute_spillover_matrix",
     "concat_samples",
+    "current_transform_window",
     "current_viewer",
     "density_curve",
     "density_image",
@@ -87,6 +90,7 @@ __all__ = [
     "get_scale",
     "logicle_transform",
     "open_napari",
+    "open_napari_transform",
     "plot_biaxial",
     "plot_compensation",
     "plot_gate",
@@ -107,23 +111,29 @@ __all__ = [
 ]
 
 
-#: Names served from :mod:`cytopy.viewer`, which pulls in napari and Qt. Listed
-#: here rather than read off ``viewer.__all__`` because importing the module to
-#: find out would defeat the point; ``tests/test_api.py`` checks the two agree.
-_LAZY = (
-    "CytoViewer",
-    "Panel",
-    "as_one_anndata",
-    "current_viewer",
-    "faded_colormap",
-    "open_napari",
-)
+#: Names served from the modules that pull in napari and Qt, mapped to the
+#: module each comes from. Listed here rather than read off their ``__all__``
+#: because importing them to find out would defeat the point;
+#: ``tests/test_api.py`` checks the lists agree.
+_LAZY = {
+    "CofactorWindow": "cofactors",
+    "Cofactors": "cofactors",
+    "CytoViewer": "viewer",
+    "Panel": "viewer",
+    "as_one_anndata": "viewer",
+    "current_transform_window": "cofactors",
+    "current_viewer": "viewer",
+    "faded_colormap": "viewer",
+    "open_napari": "viewer",
+    "open_napari_transform": "cofactors",
+}
 
 
 def __getattr__(name: str):
     # napari (and Qt) are heavy and optional: import them only on first use.
-    if name in _LAZY:
-        from . import viewer as _viewer
+    module = _LAZY.get(name)
+    if module is not None:
+        import importlib
 
-        return getattr(_viewer, name)
+        return getattr(importlib.import_module(f".{module}", __name__), name)
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

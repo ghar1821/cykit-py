@@ -1199,3 +1199,67 @@ def test_open_napari_defaults_show_everything(demo, on_fixture_window):
     cv = cytopy.current_viewer()
     assert cv.panel.samples == ()
     assert int(cv.selection_mask().sum()) == cv.adata.n_obs
+
+
+# --------------------------------------------------------------------------
+# axis range fields
+# --------------------------------------------------------------------------
+def test_the_fields_read_back_the_range_on_screen(cv):
+    """They are a readout as well as an input, in the units the ticks show."""
+    axes = cv.axes
+    raw_lo, raw_hi = cv.x_scale.to_raw(np.array([axes.x_lo, axes.x_hi]))
+    assert cv.w_xmin.value == pytest.approx(raw_lo, rel=1e-3)
+    assert cv.w_xmax.value == pytest.approx(raw_hi, rel=1e-3)
+
+
+def test_typing_a_range_pins_the_axis(cv):
+    """And in raw units: the axis is arcsinh, the field says 1000."""
+    cv.w_xmin.value = -100.0
+    cv.w_xmax.value = 10_000.0
+    cv.w_limits_apply.changed.emit(None)
+    assert cv.axes.x_lo == pytest.approx(np.arcsinh(-100.0 / 150.0))
+    assert cv.axes.x_hi == pytest.approx(np.arcsinh(10_000.0 / 150.0))
+
+
+def test_a_pinned_range_survives_a_redraw(cv):
+    """Changing something unrelated must not quietly refit the axes."""
+    cv.set_limits(x=(-100.0, 10_000.0))
+    before = (cv.axes.x_lo, cv.axes.x_hi)
+    cv.w_smooth.value = 2.0
+    assert (cv.axes.x_lo, cv.axes.x_hi) == before
+
+
+def test_fit_to_data_hands_the_axes_back(cv):
+    cv.set_limits(x=(-100.0, 10_000.0), y=(-100.0, 10_000.0))
+    pinned = (cv.axes.x_lo, cv.axes.x_hi)
+    cv.w_autoscale.changed.emit(None)
+    assert cv.panel.x_lim is None and cv.panel.y_lim is None
+    assert (cv.axes.x_lo, cv.axes.x_hi) != pinned
+
+
+def test_an_inverted_range_means_automatic(cv):
+    """A cleared field should not strand the plot on a sliver."""
+    cv.set_limits(x=(-100.0, 10_000.0))
+    cv.set_limits(x=(0.0, 0.0))
+    assert cv.panel.x_lim is None
+
+
+def test_changing_channel_drops_a_range_typed_for_the_old_one(cv):
+    cv.set_limits(x=(-100.0, 10_000.0))
+    cv.w_x.value = "CD8 (APC-A)"
+    assert cv.panel.x_lim is None
+
+
+def test_a_histogram_ignores_the_y_range(cv):
+    """Its vertical axis is per cent of mode, so the fields are off."""
+    cv.set_plot(kind="histogram")
+    assert not cv.w_ymin.enabled
+    cv.set_limits(y=(-100.0, 10_000.0))
+    assert (cv.axes.y_lo, cv.axes.y_hi) == (0.0, 1.0)
+
+
+def test_limits_on_an_untransformed_channel_are_plain_values(cv):
+    """No transform, so what is typed is what the axis gets."""
+    cv.set_plot(x="FSC-A", y="SSC-A")
+    cv.set_limits(x=(0.0, 200_000.0))
+    assert (cv.axes.x_lo, cv.axes.x_hi) == (0.0, 200_000.0)

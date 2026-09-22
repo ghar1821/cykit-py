@@ -13,8 +13,9 @@ import pytest
 import cytopy
 
 # Modules whose names are served lazily, because importing them pulls in napari
-# and Qt. cytopy.__init__ lists them by hand for exactly that reason.
-LAZY_MODULES = {"viewer"}
+# and Qt. cytopy.__init__ maps each name to its module by hand for exactly that
+# reason.
+LAZY_MODULES = {"viewer", "cofactors"}
 
 
 def _module_names():
@@ -42,12 +43,19 @@ def test_all_is_sorted_and_unique():
     assert len(cytopy.__all__) == len(set(cytopy.__all__))
 
 
-def test_the_lazy_list_matches_what_the_viewer_exports():
+def test_the_lazy_list_matches_what_the_napari_modules_export():
     """The guard that stops the two drifting apart again."""
     pytest.importorskip("napari")
-    from cytopy import viewer
 
-    assert sorted(cytopy._LAZY) == sorted(viewer.__all__)
+    advertised = sorted(cytopy._LAZY)
+    exported = []
+    for name in LAZY_MODULES:
+        module = importlib.import_module(f"cytopy.{name}")
+        exported += module.__all__
+        # ... and each name must be served from the module that defines it.
+        for export in module.__all__:
+            assert cytopy._LAZY[export] == name
+    assert advertised == sorted(exported)
 
 
 def test_the_removed_names_are_really_gone():

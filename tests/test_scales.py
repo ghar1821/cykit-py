@@ -1,7 +1,14 @@
 import numpy as np
 import pytest
 
-from cytopy.scales import AsinhScale, LinearScale, LogicleScale, LogScale, get_scale
+from cytopy.scales import (
+    AsinhScale,
+    LinearScale,
+    LogicleScale,
+    LogScale,
+    get_scale,
+    pad_range,
+)
 
 
 @pytest.mark.parametrize(
@@ -57,3 +64,34 @@ def test_get_scale_dispatch():
     assert get_scale("asinh", cofactor=5).cofactor == 5
     with pytest.raises(ValueError):
         get_scale("nope")
+
+
+@pytest.mark.parametrize(
+    "lo,hi",
+    [(0.0, 262144.0), (-5234.2, 267000.0), (1200.0, 98000.0), (0.0, 1023.0), (-0.3, 4.2)],
+)
+def test_linear_ticks_stay_inside_the_range(lo, hi):
+    """A tick past the end of the axis is drawn outside the frame."""
+    t = LinearScale().ticks(lo, hi)
+    assert np.all((t.major >= lo) & (t.major <= hi))
+    assert np.all((t.minor >= lo) & (t.minor <= hi))
+
+
+@pytest.mark.parametrize("lo,hi", [(0.0, 262144.0), (1200.0, 98000.0), (0.0, 1023.0)])
+def test_linear_ticks_are_round_and_plentiful(lo, hi):
+    """Round steps, and enough of them to read the axis by."""
+    t = LinearScale().ticks(lo, hi)
+    assert len(t.major) >= 4
+    step = np.diff(t.major)
+    assert np.allclose(step, step[0])
+    mantissa = step[0] / 10.0 ** np.floor(np.log10(step[0]))
+    assert round(float(mantissa), 6) in (1.0, 2.0, 5.0)
+
+
+def test_linear_tick_labels_are_plain_decimals():
+    """Not ``-0``, and not ``2.5e+05`` where ``250000`` fits."""
+    labels = LinearScale().ticks(*pad_range(0.0, 262144.0)).labels
+    assert "-0" not in labels
+    assert "0" in labels
+    assert "250000" in labels
+    assert not any("e" in lab for lab in labels)

@@ -172,3 +172,43 @@ def test_split_samples_is_the_other_end_of_concat(demo, demo_path):
     assert np.array_equal(parts["demo"].X, demo.X)
     with pytest.raises(KeyError, match="nothing to split on"):
         cytopy.split_samples(demo, key="absent")
+
+
+def test_slash_in_channel_name_survives_h5ad_roundtrip(tmp_path):
+    """Imaging panels name parameters things like ``Delta CoM (SSC/FSC)``.
+
+    HDF5 reads ``/`` as a path separator, and cytopy keys ``uns`` entries by
+    channel name, so an unsanitised name silently nests those entries under a
+    group nothing reads back.
+    """
+    import flowio
+
+    rng = np.random.default_rng(0)
+    channels = ["FSC-A", "Delta CoM (SSC (Imaging)/FSC)", "PE-A"]
+    events = rng.lognormal(6.0, 1.0, size=(500, len(channels))).astype(np.float32)
+    path = tmp_path / "imaging.fcs"
+    with open(path, "wb") as fh:
+        flowio.create_fcs(fh, events.flatten().tolist(), channels, channels)
+
+    a = cytopy.read_fcs(path)
+    # The index is safe to write, the original is still on hand to read.
+    assert "Delta CoM (SSC (Imaging)_FSC)" in a.var_names
+    assert not any("/" in n for n in a.var_names)
+    assert a.var["channel"].tolist() == channels
+
+    # Looking the channel up by the name the file used keeps working.
+    from cytopy.transforms import channel_index
+
+    assert channel_index(a, "Delta CoM (SSC (Imaging)/FSC)") == 1
+
+    cytopy.logicle_transform(a, layer="raw", key_added="logicle", inplace=True)
+    assert not any("/" in k for k in a.uns["cytopy"]["logicle_params"])
+
+    out = tmp_path / "imaging.h5ad"
+    a.write_h5ad(out)
+
+    import anndata as ad
+
+    back = ad.read_h5ad(out)
+    assert list(back.var_names) == list(a.var_names)
+    assert set(back.uns["cytopy"]["logicle_params"]) == set(a.uns["cytopy"]["logicle_params"])

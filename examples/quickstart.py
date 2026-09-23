@@ -26,7 +26,6 @@ def main(path: str = "demo.fcs", controls: str | None = None) -> None:
         spillover = cytopy.compute_spillover_matrix(stained, unstained=unstained)
         print("spillover from controls:\n", spillover.round(4))
     cytopy.compensate(adata, spillover, inplace=True)  # -> layers["comp"]
-    print("suggested cofactors:", cytopy.estimate_cofactors(adata, layer="comp"))
     cytopy.asinh_transform(adata, 150.0, layer="comp", inplace=True)  # -> layers["asinh"]
 
     # Pick the channels in the window. Gates drawn there are boolean columns

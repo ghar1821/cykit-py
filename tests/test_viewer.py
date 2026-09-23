@@ -65,11 +65,11 @@ def test_switching_channels_redraws(cv):
     assert not np.array_equal(before, cv.density.data)
 
 
-def test_linear_ticks_label_the_stored_values(cv):
+def test_transformed_ticks_label_the_stored_values(cv):
     from cytopy.scales import LinearScale, PretransformedScale
 
     assert isinstance(cv.x_scale, PretransformedScale)
-    cv.w_ticks.value = "linear"
+    cv.w_ticks.value = "transformed"
     assert isinstance(cv.x_scale, LinearScale)
     # stored values are single-digit arcsinh units, not decades of raw signal
     assert not any(lbl.startswith("10") for lbl in _labels(cv))
@@ -83,7 +83,7 @@ def test_the_viewer_never_transforms_the_data(cv):
     j = cytopy.channel_index(cv.adata, "CD3 (FITC-A)")
     assert np.allclose(cv._column("CD3 (FITC-A)", mask), cv.adata.layers["asinh"][mask, j])
     # ... and switching the tick mode must not touch the values either
-    cv.w_ticks.value = "linear"
+    cv.w_ticks.value = "transformed"
     assert np.allclose(cv._column("CD3 (FITC-A)", mask), cv.adata.layers["asinh"][mask, j])
 
 
@@ -170,12 +170,21 @@ def test_gate_without_shapes_is_a_no_op(cv):
     assert "draw a shape" in cv.w_status.value
 
 
-def test_the_axes_always_trim_the_extremes(cv):
-    """Not a setting any more: a single extreme event flattens the plot without it."""
-    tight = cv.axes.x_hi - cv.axes.x_lo
-    cv._robust = False
+def test_the_axes_hold_everything_until_told_to_clip(cv):
+    """Off by default: clipping drops events from the plot and from every gate."""
+    full = cv.axes.x_hi - cv.axes.x_lo
+    cv._robust = True
     cv.refresh()
-    assert cv.axes.x_hi - cv.axes.x_lo > tight
+    assert cv.axes.x_hi - cv.axes.x_lo < full
+
+
+def test_the_clip_checkbox_drives_it(cv):
+    full = cv.axes.x_hi - cv.axes.x_lo
+    cv.w_clip.value = True
+    assert cv._robust is True
+    assert cv.axes.x_hi - cv.axes.x_lo < full
+    cv.w_clip.value = False
+    assert cv.axes.x_hi - cv.axes.x_lo == pytest.approx(full)
 
 
 def test_channels_can_be_named_by_marker_or_detector(demo, make_napari_viewer):
@@ -460,7 +469,12 @@ def test_shape_types_survive_being_reprojected(cv):
 
 
 def test_events_off_the_axes_are_reported_not_hidden(cv):
-    """Robust limits clip the axes, so a few events are drawn nowhere."""
+    """A narrowed axis draws some events nowhere, and the status line says so."""
+    assert cv.off_axis_count() == 0  # the default range holds everything
+
+    lo, hi = cv.axes.x_lo, cv.axes.x_hi
+    narrow = cv.x_scale.to_raw(np.array([lo + 0.4 * (hi - lo), hi]))
+    cv.set_limits(x=(float(narrow[0]), float(narrow[1])))
     off = cv.off_axis_count()
     assert off > 0
 
@@ -468,9 +482,8 @@ def test_events_off_the_axes_are_reported_not_hidden(cv):
     cv.apply_gate("g")
     assert f"{off:,} outside the axes" in cv.w_status.value
 
-    cv._robust = False
-    cv.refresh()
-    assert cv.off_axis_count() == 0  # the full range holds everything
+    cv.w_autoscale.changed.emit(None)
+    assert cv.off_axis_count() == 0  # back to holding everything
 
 
 def test_apply_gate_needs_a_shape(cv):
@@ -1204,21 +1217,36 @@ def test_open_napari_defaults_show_everything(demo, on_fixture_window):
 # --------------------------------------------------------------------------
 # axis range fields
 # --------------------------------------------------------------------------
-def test_the_fields_read_back_the_range_on_screen(cv):
-    """They are a readout as well as an input, in the units the ticks show."""
+def test_the_slider_reads_back_the_range_on_screen(cv):
+    """It is a readout as well as an input, in display coordinates."""
     axes = cv.axes
-    raw_lo, raw_hi = cv.x_scale.to_raw(np.array([axes.x_lo, axes.x_hi]))
-    assert cv.w_xmin.value == pytest.approx(raw_lo, rel=1e-3)
-    assert cv.w_xmax.value == pytest.approx(raw_hi, rel=1e-3)
+    lo, hi = cv.w_xrange.value
+    assert lo == pytest.approx(axes.x_lo, rel=1e-6)
+    assert hi == pytest.approx(axes.x_hi, rel=1e-6)
 
 
-def test_typing_a_range_pins_the_axis(cv):
-    """And in raw units: the axis is arcsinh, the field says 1000."""
-    cv.w_xmin.value = -100.0
-    cv.w_xmax.value = 10_000.0
-    cv.w_limits_apply.changed.emit(None)
-    assert cv.axes.x_lo == pytest.approx(np.arcsinh(-100.0 / 150.0))
-    assert cv.axes.x_hi == pytest.approx(np.arcsinh(10_000.0 / 150.0))
+def test_the_slider_label_carries_the_raw_units(cv):
+    """The ticks are labelled in raw units, so the slider says them too."""
+    raw_lo, raw_hi = cv.x_scale.to_raw(np.array([cv.axes.x_lo, cv.axes.x_hi]))
+    label = cv.w_xrange.label
+    assert label.startswith("x range")
+    assert f"{raw_hi:,.0f}" in label or f"{raw_hi:.3g}" in label
+    assert str(int(abs(raw_lo)))[:2] in label or f"{raw_lo:.2f}".rstrip("0") in label
+
+
+def test_the_slider_can_be_dragged_past_the_data(cv):
+    """Framing an outlier needs room beyond where the axis currently sits."""
+    lo, hi = cv.axes.x_lo, cv.axes.x_hi
+    assert cv.w_xrange.min < lo
+    assert cv.w_xrange.max > hi
+
+
+def test_dragging_the_slider_pins_the_axis(cv):
+    """In display coordinates, which is what the slider travels in."""
+    target = (float(cv.axes.x_lo) + 0.1, float(cv.axes.x_hi) - 0.1)
+    cv.w_xrange.value = target
+    assert cv.panel.x_lim == pytest.approx(target)
+    assert (cv.axes.x_lo, cv.axes.x_hi) == pytest.approx(target)
 
 
 def test_a_pinned_range_survives_a_redraw(cv):
@@ -1253,7 +1281,7 @@ def test_changing_channel_drops_a_range_typed_for_the_old_one(cv):
 def test_a_histogram_ignores_the_y_range(cv):
     """Its vertical axis is per cent of mode, so the fields are off."""
     cv.set_plot(kind="histogram")
-    assert not cv.w_ymin.enabled
+    assert not cv.w_yrange.enabled
     cv.set_limits(y=(-100.0, 10_000.0))
     assert (cv.axes.y_lo, cv.axes.y_hi) == (0.0, 1.0)
 

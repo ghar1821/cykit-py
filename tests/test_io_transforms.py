@@ -104,12 +104,6 @@ def test_asinh_in_place_overwrites_X(demo):
     assert [k for k in demo.layers if k is not None] == ["raw"]
 
 
-def test_estimate_cofactors(demo, layer="X"):
-    cof = cytopy.estimate_cofactors(demo, layer="X")
-    assert set(cof) == set(cytopy.fluor_channels(demo))
-    assert all(v > 1 for v in cof.values())
-
-
 def test_logicle_transform_maps_into_unit_interval(demo):
     cytopy.logicle_transform(demo, layer="X", inplace=True)
     out = demo.layers["logicle"][:, 2]

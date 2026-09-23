@@ -9,7 +9,7 @@ description = "Interactive cytometry analysis: FCS -> AnnData -> napari gating"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "BSD-3-Clause" }
-authors = [{ name = "Putri G", email = "putri.g@wehi.edu.au" }]
+authors = [{ name = "Givanna Putri", email = "putri.g@wehi.edu.au" }]
 dependencies = [
     "numpy>=1.24",
     "pandas>=2.0",

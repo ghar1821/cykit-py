@@ -24,7 +24,7 @@ import numpy as np
 
 from ._util import layer_matrix, subsample_indices
 from .density import Axes2D, density_curve, density_image
-from .scales import AsinhScale, PretransformedScale, pad_range
+from .scales import AXIS_MARGIN, AsinhScale, PretransformedScale, pad_range
 from .transforms import channel_index, fluor_channels
 
 __all__ = [
@@ -49,12 +49,41 @@ KNEE = float(np.arcsinh(1.0))
 MAX_EVENTS = 200_000
 
 #: Fewer negative events than this and there is nothing for a cofactor to sit
-#: on. The same cliff :func:`~cytopy.estimate_cofactors` has.
+#: on.
 MIN_NEGATIVES = 50
 
 #: Gutter between panels, as a fraction of the panel side. Wide enough for the
 #: axis labels of the panel to its left.
 GUTTER = 0.45
+
+#: Hint on the box that puts one cofactor on the whole panel.
+_ALL_TOOLTIP = "Type a cofactor and press Enter to give every channel that value."
+
+#: Widest axis margin the slider offers, as a percentage of the span. Every
+#: point of it is canvas spent on empty space, so the travel stops where the
+#: data would be squeezed into the middle third of the panel.
+MAX_MARGIN_PERCENT = 50
+
+#: Hint on the box beside each cofactor slider.
+_BOX_TOOLTIP = (
+    "Type an exact cofactor and press Enter. The slider follows, to the nearest "
+    "step it has; the value kept is the one you typed."
+)
+
+#: Width of that box, in pixels. Wide enough for a six-figure cofactor and no
+#: wider, so the slider keeps the rest of the row.
+_BOX_WIDTH = 78
+
+#: Steps the cofactor slider has across ``cofactor_range``, log-spaced. Over a
+#: two-decade range that is about half a per cent per step, which is finer than
+#: the judgement being made -- the box beside it is there for an exact number.
+SLIDER_STEPS = 1000
+
+#: Hint on that slider.
+_MARGIN_TOOLTIP = (
+    "How far past the data the axis runs, as a proportion of the span at each "
+    "end. The span is in decades here, so a little goes a long way."
+)
 
 _CURVE = "#4c78a8"
 _BAND = "#f58518"
@@ -156,13 +185,16 @@ class _ChannelData:
         np.arcsinh(self.buf, out=self.buf)
         return self.buf
 
-    def limits(self, cofactor: float) -> tuple[float, float]:
+    def limits(self, cofactor: float, margin: float = AXIS_MARGIN) -> tuple[float, float]:
         """Axis range, from the raw quantiles rather than the transformed ones.
 
         Parameters
         ----------
         cofactor
             Width of the linear region.
+        margin
+            Proportion of the span to add beyond each end, as
+            :func:`~cytopy.scales.pad_range` takes it.
 
         Returns
         -------
@@ -178,7 +210,53 @@ class _ChannelData:
         population as the slider moves.
         """
         lo, hi = np.arcsinh(np.array([self.q_lo, self.q_hi]) / cofactor)
-        return pad_range(float(lo), float(hi))
+        return pad_range(float(lo), float(hi), margin)
+
+
+#: The log-slider class, built on first use because magicgui is a GUI import.
+_LOG_SLIDER: type | None = None
+
+
+def _log_slider_class() -> type:
+    """``FloatLogSlider`` with its handle where the value actually is.
+
+    magicgui converts a value to a slider position with ``int(pos)``, which
+    truncates rather than rounds. Two things follow, both visible:
+
+    * The handle settles a step below the value it is showing. Every redraw
+      writes the cofactor back to the widget, so a drag to position 500 lands
+      on 499, and the handle and the number beside it disagree from then on.
+    * The top of the range is unreachable. The largest cofactor maps to the
+      last position, truncates to the one before it, and the handle stops a
+      step short of the right-hand end however far you drag.
+
+    Rounding fixes both, and halves the worst-case error into the bargain: the
+    position is the nearest one to the value rather than the next one down.
+    """
+    global _LOG_SLIDER
+    if _LOG_SLIDER is None:
+        from magicgui.widgets import FloatLogSlider
+
+        class _RoundedLogSlider(FloatLogSlider):  # type: ignore[misc, valid-type]
+            def _position_from_value(self, value: float) -> int:
+                base = np.log(self.base)
+                offset = np.log(self.min) / base
+                pos = (np.log(value) / base - offset) / self._scale + self._min_pos
+                return int(np.clip(round(float(pos)), self._min_pos, self._max_pos))
+
+        _LOG_SLIDER = _RoundedLogSlider
+    return _LOG_SLIDER
+
+
+def _resolve_margin(margin: float) -> float:
+    """Validate an axis margin, so a percentage typed as one is not 100x too wide."""
+    value = float(margin)
+    if not np.isfinite(value) or not 0.0 <= value <= MAX_MARGIN_PERCENT / 100.0:
+        raise ValueError(
+            f"margin must be a proportion between 0 and {MAX_MARGIN_PERCENT / 100.0:g}, "
+            f"not {margin!r}"
+        )
+    return value
 
 
 def _resolve_range(cofactor_range) -> tuple[float, float]:
@@ -275,8 +353,9 @@ class CofactorWindow:
     Every channel holds a cofactor from the moment the window opens, so moving
     between channels cannot lose a decision. Channels you have moved are marked
     in the channel list, which is what makes a forty-channel panel tractable:
-    settle the bulk value on two or three, fill the rest in with one button, then
-    go hunting for the handful that are wrong.
+    settle the bulk value on two or three, type it into **set every channel to**
+    to put it on the whole panel, then go hunting for the handful that are
+    wrong. ``n`` and ``p`` step between channels in file order.
 
     Parameters
     ----------
@@ -306,11 +385,21 @@ class CofactorWindow:
         ``"default"`` key. ``None`` seeds the geometric midpoint of
         ``cofactor_range``. A seed outside the range is refused rather than
         clamped.
-    estimate
-        Cofactors from :func:`~cytopy.estimate_cofactors`, shown as a reference
-        in the status line and offered by two buttons. Deliberately **not** the
-        slider position: a number you can see next to your own is useful, a
-        number silently standing in for your own is not.
+    ticks
+        How the tuned axes are labelled, one of
+        :data:`~cytopy.viewer.TICK_CHOICES`, and changeable in the window
+        afterwards. ``"untransformed"``, the default, puts the ticks at round
+        numbers of the raw units the slider is measured in, so the knee line
+        and the cofactor read against the same scale. ``"transformed"`` labels
+        the arcsinh values the panel is actually plotting. Labelling only: it
+        moves nothing.
+    margin
+        How far past the data the axes run, as a proportion of the span added
+        at each end; :data:`~cytopy.scales.AXIS_MARGIN` by default, and
+        adjustable in the window with the **axis margin %** slider. The span is
+        in display coordinates -- decades, on an arcsinh axis -- so a tenth of
+        it moves the raw value at the end of the axis by a good deal more than
+        a tenth. Capped at :data:`MAX_MARGIN_PERCENT`.
     max_events
         Events plotted. ``None`` plots every one. The statistics in the status
         line always come from every event, whatever this is set to.
@@ -340,7 +429,8 @@ class CofactorWindow:
         cofactor_range,
         channels: Sequence[str] | None = None,
         cofactor=None,
-        estimate: Mapping[str, float] | None = None,
+        ticks: str = "untransformed",
+        margin: float = AXIS_MARGIN,
         max_events: int | None = MAX_EVENTS,
         seed: int = 0,
         bins: int = 512,
@@ -353,7 +443,7 @@ class CofactorWindow:
         """Build the panels and the control panel, then draw. See the class docstring."""
         import napari
 
-        from .viewer import DEFAULT_BACKGROUND, Panel, _hide_overlays, _is_light
+        from .viewer import DEFAULT_BACKGROUND, Panel, _hide_overlays, _is_light, _resolve_ticks
 
         self.cofactor_range = _resolve_range(cofactor_range)
         lo, hi = self.cofactor_range
@@ -371,8 +461,9 @@ class CofactorWindow:
         self.channels = _resolve_names(adata, channels)
         if not self.channels:
             raise ValueError("no channels to tune")
-        self.estimate = dict(estimate) if estimate else {}
         self.cofactors = Cofactors(_seed(adata, self.channels, cofactor, lo, hi), layer=self.layer)
+        self._ticks = _resolve_ticks(ticks)
+        self.margin = _resolve_margin(margin)
         self.x = str(adata.var_names[channel_index(adata, x)]) if x else self.channels[0]
         self.y = (
             str(adata.var_names[channel_index(adata, y)]) if y else _default_y(adata, self.channels)
@@ -502,68 +593,83 @@ class CofactorWindow:
             if canvas is not None:
                 canvas.bgcolor = self.background
 
+    def _cofactor_row(self, label: str, live: bool):
+        """A log slider with a box beside it holding the same cofactor.
+
+        The slider's own readout is hidden because magicgui fills it with the
+        *slider position* -- 869 for a cofactor of 3000 -- which is an internal
+        coordinate no one wants to read, let alone type into.
+
+        The box is where an exact number goes. The slider quantises to a
+        thousandth of its travel, about a quarter of a per cent here, so typing
+        3000 and letting the slider round it would store 2992. The typed value
+        goes straight to :meth:`set_cofactor` instead, and the slider is only
+        moved to the nearest step it can reach -- quietly, so it cannot write
+        its own rounding back.
+
+        Returns
+        -------
+        tuple
+            ``(slider, box, row)`` -- the row is what goes in the panel.
+        """
+        from magicgui.widgets import Container, LineEdit
+
+        lo, hi = self.cofactor_range
+        slider = _log_slider_class()(
+            label="", min=lo, max=hi, base=10, max_pos=SLIDER_STEPS, tracking=live
+        )
+        slider._widget._mgui_set_readout_visibility(False)
+        box = LineEdit(label="", tooltip=_BOX_TOOLTIP)
+        box.max_width = _BOX_WIDTH
+        row = Container(widgets=[slider, box], layout="horizontal", label=label, labels=False)
+        row.margins = (0, 0, 0, 0)
+        return slider, box, row
+
     def _init_widget(self) -> None:
         from magicgui.widgets import (
             CheckBox,
             ComboBox,
             Container,
-            FloatLogSlider,
             Label,
+            LineEdit,
             PushButton,
+            Slider,
         )
 
-        lo, hi = self.cofactor_range
+        from .viewer import TICK_CHOICES
+
         live = self.n_plotted <= MAX_EVENTS
 
-        self.w_x = ComboBox(label="tuning", choices=self._channel_choices(), value=self.x)
-        self.w_prev = PushButton(text="◂ prev  (p)")
-        self.w_next = PushButton(text="next ▸  (n)")
-        self.w_y = ComboBox(
-            label="against", choices=[str(n) for n in self.adata.var_names], value=self.y
-        )
+        self.w_x = ComboBox(label="x", choices=self._channel_choices(), value=self.x)
+        self.w_y = ComboBox(label="y", choices=[str(n) for n in self.adata.var_names], value=self.y)
 
-        self.w_cx = FloatLogSlider(
-            label="x cofactor",
-            min=lo,
-            max=hi,
-            base=10,
-            max_pos=1000,
-            value=self.cofactors[self.x],
+        self.w_cx, self.w_cx_box, cx_row = self._cofactor_row("x cofactor", live)
+        self.w_cy, self.w_cy_box, cy_row = self._cofactor_row("y cofactor", live)
+        self._cy_row = cy_row
+        self.w_ticks = ComboBox(label="axis ticks", choices=TICK_CHOICES, value=self._ticks)
+        self.w_margin = Slider(
+            label="axis margin %",
+            min=0,
+            max=MAX_MARGIN_PERCENT,
+            value=round(self.margin * 100),
             tracking=live,
+            tooltip=_MARGIN_TOOLTIP,
         )
-        self.w_cy = FloatLogSlider(
-            label="y cofactor",
-            min=lo,
-            max=hi,
-            base=10,
-            max_pos=1000,
-            value=self.cofactors.get(self.y, lo),
-            tracking=live,
-        )
-        self.w_bulk = PushButton(text="set every untouched channel to this")
-        self.w_revert = PushButton(text="back to the seed")
-        self.w_estimate = PushButton(text="use the estimate here")
-        self.w_bulk_estimate = PushButton(text="use the estimate everywhere untouched")
+        self.w_all = LineEdit(label="set every channel to", tooltip=_ALL_TOOLTIP)
         self.w_copy = PushButton(text="copy as a Python dict")
         self.w_live = CheckBox(label="redraw while dragging", value=live)
 
         self.w_head = Label(value="")
         self.w_status = Label(value="")
 
-        for w in (self.w_estimate, self.w_bulk_estimate):
-            w.visible = bool(self.estimate)
-
         channel = Container(
-            widgets=[self.w_x, self.w_prev, self.w_next, self.w_y], label="channels"
+            widgets=[self.w_x, self.w_y, self.w_ticks, self.w_margin], label="channels"
         )
         cofactor = Container(
             widgets=[
-                self.w_cx,
-                self.w_cy,
-                self.w_bulk,
-                self.w_revert,
-                self.w_estimate,
-                self.w_bulk_estimate,
+                cx_row,
+                cy_row,
+                self.w_all,
                 self.w_live,
             ],
             label="cofactor",
@@ -576,12 +682,14 @@ class CofactorWindow:
         self.w_y.changed.connect(self._y_changed)
         self.w_cx.changed.connect(lambda e: self._slider_moved(self.x, self.w_cx.value))
         self.w_cy.changed.connect(lambda e: self._slider_moved(self.y, self.w_cy.value))
-        self.w_prev.changed.connect(lambda e: self.step(-1))
-        self.w_next.changed.connect(lambda e: self.step(1))
-        self.w_bulk.changed.connect(lambda e: self.fill_untouched(self.cofactors[self.x]))
-        self.w_revert.changed.connect(self._revert)
-        self.w_estimate.changed.connect(self._use_estimate)
-        self.w_bulk_estimate.changed.connect(self._bulk_estimate)
+        self.w_cx_box.native.editingFinished.connect(lambda: self._box_entered(self.w_cx_box, "x"))
+        self.w_cy_box.native.editingFinished.connect(lambda: self._box_entered(self.w_cy_box, "y"))
+        # editingFinished, not the widget's own ``changed``: magicgui wires a
+        # LineEdit to textChanged, which would fire -- and redraw -- on every
+        # keystroke, so "3000" would pass through 3, 30 and 300 on its way.
+        self.w_ticks.changed.connect(self._ticks_changed)
+        self.w_margin.changed.connect(self._margin_changed)
+        self.w_all.native.editingFinished.connect(self._all_entered)
         self.w_copy.changed.connect(self._copy)
         self.w_live.changed.connect(self._set_tracking)
 
@@ -621,10 +729,15 @@ class CofactorWindow:
             self.w_x.choices = self._channel_choices()
             self.w_x.value = keep
             self.w_y.value = self.y
+            # The slider rounds to the nearest step it has; the box carries the
+            # value that is actually stored, which is the one that gets used.
             self.w_cx.value = self.cofactors[self.x]
+            self.w_cx_box.value = f"{self.cofactors[self.x]:g}"
             self.w_cy.value = self.cofactors.get(self.y, lo)
-            self.w_cy.enabled = self._y_tuned
-            self.w_cy.label = "y cofactor" if self._y_tuned else "y (not transformed)"
+            self.w_cy_box.value = f"{self.cofactors[self.y]:g}" if self._y_tuned else ""
+            self.w_cy.enabled = self.w_cy_box.enabled = self._y_tuned
+            self._cy_row.label = "y cofactor" if self._y_tuned else "y (not transformed)"
+            self.w_margin.value = round(self.margin * 100)
 
     def set_cofactor(self, channel: str, value: float) -> None:
         """Set one channel's cofactor and redraw. The single mutation point.
@@ -675,12 +788,31 @@ class CofactorWindow:
             index = 0
         self.set_channels(x=self.channels[(index + int(delta)) % len(self.channels)])
 
-    def fill_untouched(self, value: float) -> None:
-        """Give every channel still on its seed this cofactor.
+    def set_margin(self, margin: float) -> None:
+        """How far past the data the axes run, and redraw.
 
-        The action that makes a forty-channel panel tractable. It cannot
-        overwrite a decision: channels you have already moved are left alone,
-        which matters because there is no undo.
+        Parameters
+        ----------
+        margin
+            Proportion of the span to add beyond each end, clamped to
+            ``0 .. MAX_MARGIN_PERCENT / 100``. The span is in display
+            coordinates, so on these arcsinh axes it is measured in decades and
+            a small proportion moves the raw value at the end of the axis by a
+            good deal more.
+        """
+        self.margin = _resolve_margin(margin)
+        self._bind()
+        self.refresh()
+
+    def set_all(self, value: float) -> None:
+        """Give every channel this cofactor, and clear the per-channel marks.
+
+        The action that makes a forty-channel panel tractable: settle a bulk
+        value on two or three channels, put it on the whole panel, then go
+        hunting for the handful that are wrong. It overwrites every channel,
+        including ones you have already moved, so afterwards nothing is
+        individually tuned and every channel reads ``○`` again -- which is the
+        truth, since they all now hold the same number. There is no undo.
 
         Parameters
         ----------
@@ -689,8 +821,9 @@ class CofactorWindow:
         """
         lo, hi = self.cofactor_range
         value = float(min(max(float(value), lo), hi))
-        for name in self.cofactors.untouched:
+        for name in self.cofactors:
             self.cofactors[name] = value
+        self.cofactors.adjusted.clear()
         self._bind()
         self.refresh()
 
@@ -708,22 +841,55 @@ class CofactorWindow:
         if not self._updating:
             self.set_channels(y=str(self.w_y.value))
 
-    def _revert(self, *_) -> None:
-        self.cofactors.adjusted.discard(self.x)
-        self._bind()
-        self.refresh()
+    def _margin_changed(self, *_) -> None:
+        if not self._updating:
+            self.set_margin(int(self.w_margin.value) / 100.0)
 
-    def _use_estimate(self, *_) -> None:
-        if self.x in self.estimate:
-            self.set_cofactor(self.x, self.estimate[self.x])
+    def _ticks_changed(self, *_) -> None:
+        if not self._updating:
+            self._ticks = str(self.w_ticks.value)
+            self.refresh()
 
-    def _bulk_estimate(self, *_) -> None:
+    def _box_entered(self, box, axis: str) -> None:
+        """A cofactor typed beside a slider. Exact: the slider does not round it."""
+        channel = self.x if axis == "x" else self.y
+        if channel not in self.cofactors:
+            return
+        text = str(box.value).strip()
+        if not text:
+            self._bind()
+            return
+        try:
+            value = float(text.replace(",", "").replace("_", ""))
+        except ValueError:
+            self.w_status.value = f"{text!r} is not a number"
+            self._bind()
+            return
         lo, hi = self.cofactor_range
-        for name in self.cofactors.untouched:
-            if name in self.estimate:
-                self.cofactors[name] = float(min(max(self.estimate[name], lo), hi))
-        self._bind()
-        self.refresh()
+        self.set_cofactor(channel, value)
+        if not lo <= value <= hi:
+            self.w_status.value = (
+                f"{value:g} is outside {lo:g}-{hi:g} - clamped to {self.cofactors[channel]:g}"
+            )
+
+    def _all_entered(self, *_) -> None:
+        text = str(self.w_all.value).strip()
+        if not text:
+            return
+        try:
+            value = float(text.replace(",", "").replace("_", ""))
+        except ValueError:
+            self.w_status.value = f"{text!r} is not a number"
+            return
+        lo, hi = self.cofactor_range
+        self.set_all(value)
+        # Echo back what was actually applied, so the box never shows a number
+        # the panel is not on.
+        applied = self.cofactors[self.x]
+        with self._quiet():
+            self.w_all.value = f"{applied:g}"
+        if not lo <= value <= hi:
+            self.w_status.value = f"{value:g} is outside {lo:g}–{hi:g} — clamped to {applied:g}"
 
     def _copy(self, *_) -> None:
         from qtpy.QtWidgets import QApplication
@@ -775,14 +941,36 @@ class CofactorWindow:
         finally:
             self._drawing = False
 
+    def _tuned_scale(self, cofactor: float):
+        """How to label a tuned axis. Tick placement only; it moves nothing.
+
+        The panel always plots ``asinh(raw / cofactor)``, so ``"transformed"``
+        is the plain identity -- the stored numbers are already the display
+        coordinates. ``"untransformed"`` hands the same coordinates to
+        :class:`~cytopy.scales.PretransformedScale`, which works out where the
+        decades of the original units land and labels those instead.
+        """
+        from .scales import LinearScale
+
+        if self.w_ticks.value == "transformed":
+            return LinearScale()
+        return PretransformedScale(AsinhScale(cofactor=cofactor))
+
     def _redraw(self) -> None:
         from .scales import LinearScale
+
+        # The panels carry their own channel names, and that is what the frame
+        # labels its axes with -- so they have to be re-pointed here, or the
+        # label under a panel goes on naming the channel it opened on.
+        self.p_density.x, self.p_density.y = self.x, self.y
+        self.p_x.x = self.x
+        self.p_y.x = self.y
 
         dx = self._channel_data(self.x)
         cx = float(self.cofactors[self.x])
         xv = dx.display(cx)
-        x_lo, x_hi = dx.limits(cx)
-        x_scale = PretransformedScale(AsinhScale(cofactor=cx))
+        x_lo, x_hi = dx.limits(cx, self.margin)
+        x_scale = self._tuned_scale(cx)
 
         dy = self._channel_data(self.y)
         if self.y == self.x:
@@ -790,13 +978,13 @@ class CofactorWindow:
         elif self._y_tuned:
             cy = float(self.cofactors[self.y])
             yv = dy.display(cy)
-            y_lo, y_hi = dy.limits(cy)
-            y_scale = PretransformedScale(AsinhScale(cofactor=cy))
+            y_lo, y_hi = dy.limits(cy, self.margin)
+            y_scale = self._tuned_scale(cy)
         else:
             # Scatter is never transformed, so it is plotted as stored and its
             # axis stays put however far the x slider travels.
             yv = dy.raw
-            y_lo, y_hi = pad_range(dy.q_lo, dy.q_hi)
+            y_lo, y_hi = pad_range(dy.q_lo, dy.q_hi, self.margin)
             y_scale = LinearScale()
 
         self.p_density.axes = Axes2D(x_lo, x_hi, y_lo, y_hi, bins=self.bins)
@@ -987,9 +1175,8 @@ class CofactorWindow:
         data = self._channel_data(self.x)
         stats = self.statistics()
         mark = "● adjusted" if self.x in self.cofactors.adjusted else "○ on the seed"
-        estimate = f"   estimate {self.estimate[self.x]:,.0f}" if self.x in self.estimate else ""
         self.w_head.value = (
-            f"{self.x}   c = {self.cofactors[self.x]:,.0f}{estimate}   {mark}"
+            f"{self.x}   c = {self.cofactors[self.x]:,.0f}   {mark}"
             f"   —   {self.cofactors.n_adjusted} / {len(self.channels)} adjusted"
         )
         if data.n_neg < MIN_NEGATIVES:
@@ -1050,7 +1237,8 @@ def open_napari_transform(
     cofactor_range,
     channels: Sequence[str] | None = None,
     cofactor=None,
-    estimate: Mapping[str, float] | None = None,
+    ticks: str = "untransformed",
+    margin: float = AXIS_MARGIN,
     max_events: int | None = MAX_EVENTS,
     seed: int = 0,
     bins: int = 512,
@@ -1097,9 +1285,19 @@ def open_napari_transform(
         way :func:`~cytopy.asinh_transform` reads one. ``None`` seeds the
         geometric midpoint of ``cofactor_range``, which makes no claim about the
         data. A seed outside the range is refused rather than clamped.
-    estimate
-        Cofactors from :func:`~cytopy.estimate_cofactors`, shown beside your own
-        and offered by two buttons, but never used as the slider position.
+    ticks
+        How the tuned axes are labelled to begin with, one of
+        :data:`~cytopy.viewer.TICK_CHOICES`. ``"untransformed"``, the default,
+        labels them in the raw units the cofactor itself is measured in;
+        ``"transformed"`` labels the arcsinh values being plotted. The **axis
+        ticks** box changes it in the window.
+    margin
+        How far past the data the axes run, as a proportion of the span added
+        at each end; :data:`~cytopy.scales.AXIS_MARGIN` by default, and
+        adjustable in the window with the **axis margin %** slider. The span is
+        in display coordinates -- decades, on an arcsinh axis -- so a tenth of
+        it moves the raw value at the end of the axis by a good deal more than
+        a tenth. Capped at :data:`MAX_MARGIN_PERCENT`.
     max_events
         Events plotted. ``None`` plots every one. The reported statistics always
         come from every event.
@@ -1144,7 +1342,8 @@ def open_napari_transform(
         cofactor_range=cofactor_range,
         channels=channels,
         cofactor=cofactor,
-        estimate=estimate,
+        ticks=ticks,
+        margin=margin,
         max_events=max_events,
         seed=seed,
         bins=bins,

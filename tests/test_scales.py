@@ -90,7 +90,9 @@ def test_linear_ticks_are_round_and_plentiful(lo, hi):
 
 def test_linear_tick_labels_are_plain_decimals():
     """Not ``-0``, and not ``2.5e+05`` where ``250000`` fits."""
-    labels = LinearScale().ticks(*pad_range(0.0, 262144.0)).labels
+    # An explicit margin, so this is about the labels and not about
+    # whatever AXIS_MARGIN happens to be.
+    labels = LinearScale().ticks(*pad_range(0.0, 262144.0, 0.05)).labels
     assert "-0" not in labels
     assert "0" in labels
     assert "250000" in labels

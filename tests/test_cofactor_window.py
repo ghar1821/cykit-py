@@ -112,29 +112,6 @@ def test_the_range_must_be_positive_and_increasing(demo, make_napari_viewer, bad
         CofactorWindow(demo, "raw", cofactor_range=bad, bins=64, viewer=make_napari_viewer())
 
 
-def test_the_estimate_is_shown_but_does_not_move_the_slider(demo, make_napari_viewer):
-    import cytopy
-    from cytopy.cofactors import CofactorWindow
-
-    estimate = cytopy.estimate_cofactors(demo, layer="raw")
-    window = CofactorWindow(
-        demo,
-        "raw",
-        cofactor_range=RANGE,
-        bins=64,
-        viewer=make_napari_viewer(),
-        estimate=estimate,
-    )
-    midpoint = float(np.sqrt(RANGE[0] * RANGE[1]))
-    assert window.cofactors[window.x] == pytest.approx(midpoint)
-    assert "estimate" in window.w_head.value
-    assert window.cofactors.n_adjusted == 0
-
-    window._use_estimate()
-    assert window.cofactors[window.x] == pytest.approx(estimate[window.x])
-    assert window.x in window.cofactors.adjusted
-
-
 # -------------------------------------------------------------------- traversal
 def test_next_channel_advances_in_file_order_and_wraps(cw):
     assert cw.x == cw.channels[0]
@@ -167,20 +144,246 @@ def test_an_adjusted_channel_is_marked_in_the_channel_list(cw):
     assert all(marked[c].startswith("○") for c in cw.channels if c != cw.x)
 
 
-def test_the_bulk_action_cannot_overwrite_a_decision(cw):
+def test_setting_every_channel_overwrites_decisions_and_clears_the_marks(cw):
     decided, *rest = cw.channels
     cw.set_cofactor(decided, 42.0)
-    cw.fill_untouched(7000.0)
-    assert cw.cofactors[decided] == pytest.approx(42.0)
-    assert all(cw.cofactors[c] == pytest.approx(7000.0) for c in rest)
+    cw.set_all(7000.0)
+    assert all(cw.cofactors[c] == pytest.approx(7000.0) for c in [decided, *rest])
+    assert cw.cofactors.n_adjusted == 0
+    assert sorted(cw.cofactors.untouched) == sorted(cw.channels)
 
 
-def test_reverting_a_channel_puts_the_mark_back(cw):
+def test_the_bulk_box_applies_on_enter_and_echoes_what_it_applied(cw):
+    cw.w_all.value = "7,000"
+    cw._all_entered()
+    assert all(v == pytest.approx(7000.0) for v in cw.cofactors.values())
+    assert cw.w_all.value == "7000"
+
+
+def test_the_bulk_box_clamps_into_the_range_and_says_so(cw):
+    cw.w_all.value = str(RANGE[1] * 10)
+    cw._all_entered()
+    assert all(v == pytest.approx(RANGE[1]) for v in cw.cofactors.values())
+    assert "clamped" in cw.w_status.value
+
+
+def test_the_bulk_box_refuses_a_non_number_and_changes_nothing(cw):
+    before = dict(cw.cofactors)
+    cw.w_all.value = "three thousand"
+    cw._all_entered()
+    assert dict(cw.cofactors) == before
+    assert "not a number" in cw.w_status.value
+
+
+def test_the_bulk_box_ignores_an_empty_entry(cw):
+    before = dict(cw.cofactors)
     cw.set_cofactor(cw.x, 42.0)
+    cw.w_all.value = "   "
+    cw._all_entered()
+    assert cw.cofactors[cw.x] == pytest.approx(42.0)
+    assert set(cw.cofactors) == set(before)
+
+
+def test_the_axis_label_follows_the_chosen_x_channel(cw):
+    """The frame labels its axes from the panel, which has to be re-pointed."""
+    assert cw.p_x.x == cw.x and cw.p_density.x == cw.x
+    cw.step(1)
+    assert cw.p_x.x == cw.x
+    assert cw.p_density.x == cw.x
+    cw.set_channels(x=cw.channels[-1])
+    assert cw.p_x.x == cw.channels[-1]
+    assert cw.p_density.x == cw.channels[-1]
+
+
+def test_the_y_panel_label_follows_the_chosen_y_channel(cw):
+    cw.set_channels(y="CD8 (APC-A)")
+    assert cw.p_y.x == "CD8 (APC-A)"
+    assert cw.p_density.y == "CD8 (APC-A)"
+
+
+# ---------------------------------------------------------------- the slider
+def test_every_slider_position_survives_a_redraw(cw):
+    """magicgui truncates value -> position, which walks the handle leftwards.
+
+    Every redraw writes the cofactor back to the widget, so a position that
+    does not survive that round trip is one the handle drifts away from while
+    the number beside it stays put.
+    """
+    from cytopy.cofactors import SLIDER_STEPS
+
+    q = cw.w_cx._widget._qwidget
+    moved = []
+    for pos in range(0, SLIDER_STEPS + 1, 7):
+        q.setValue(pos)
+        cw.w_cx.value = cw.w_cx.value  # what _bind does on every redraw
+        if q.value() != pos:
+            moved.append(pos)
+    assert not moved
+
+
+def test_both_ends_of_the_range_are_reachable(cw):
+    from cytopy.cofactors import SLIDER_STEPS
+
+    q = cw.w_cx._widget._qwidget
+    for value, want in ((RANGE[0], 0), (RANGE[1], SLIDER_STEPS)):
+        cw.w_cx.value = value
+        assert q.value() == want
+        assert cw.w_cx.value == pytest.approx(value)
+
+
+def test_the_slider_rounds_rather_than_truncates(cw):
+    """Truncation biases every cofactor downwards; rounding is symmetric."""
+    errors = []
+    for value in np.geomspace(RANGE[0], RANGE[1], 200):
+        cw.w_cx.value = float(value)
+        errors.append((cw.w_cx.value - value) / value)
+    errors = np.asarray(errors)
+    assert errors.min() < 0 < errors.max()
+    assert np.abs(errors).max() < 0.005
+
+
+# ------------------------------------------------------- typed cofactor boxes
+def test_the_box_stores_the_typed_value_exactly(cw):
+    """The slider quantises; what it rounds to must not become the answer."""
+    cw.w_cx_box.value = "3000"
+    cw._box_entered(cw.w_cx_box, "x")
+    assert cw.cofactors[cw.x] == 3000.0
     assert cw.x in cw.cofactors.adjusted
-    cw._revert()
-    assert cw.x not in cw.cofactors.adjusted
-    assert cw.cofactors.untouched
+    # the slider moved to the nearest step it has, which is not exactly 3000
+    assert cw.w_cx.value == pytest.approx(3000.0, rel=0.01)
+
+
+def test_the_box_follows_the_slider(cw):
+    cw.set_cofactor(cw.x, 42.0)
+    assert cw.w_cx_box.value == "42"
+    cw.step(1)
+    assert cw.w_cx_box.value == f"{cw.cofactors[cw.x]:g}"
+
+
+def test_the_box_accepts_a_grouped_number(cw):
+    cw.w_cx_box.value = "1,250"
+    cw._box_entered(cw.w_cx_box, "x")
+    assert cw.cofactors[cw.x] == 1250.0
+
+
+def test_the_box_clamps_into_the_range_and_says_so(cw):
+    cw.w_cx_box.value = str(RANGE[1] * 10)
+    cw._box_entered(cw.w_cx_box, "x")
+    assert cw.cofactors[cw.x] == pytest.approx(RANGE[1])
+    assert "clamped" in cw.w_status.value
+
+
+def test_the_box_refuses_a_non_number_and_puts_the_value_back(cw):
+    cw.set_cofactor(cw.x, 42.0)
+    cw.w_cx_box.value = "nope"
+    cw._box_entered(cw.w_cx_box, "x")
+    assert cw.cofactors[cw.x] == pytest.approx(42.0)
+    assert "not a number" in cw.w_status.value
+    assert cw.w_cx_box.value == "42"
+
+
+def test_the_y_box_is_dead_while_y_is_a_scatter_channel(cw):
+    assert not cw._y_tuned
+    assert not cw.w_cy_box.enabled
+    assert cw.w_cy_box.value == ""
+    cw._box_entered(cw.w_cy_box, "y")  # must not raise, and must change nothing
+    assert cw.y not in cw.cofactors
+
+
+def test_the_y_box_comes_alive_on_a_fluorescence_channel(cw):
+    cw.set_channels(y="CD8 (APC-A)")
+    assert cw.w_cy_box.enabled
+    cw.w_cy_box.value = "900"
+    cw._box_entered(cw.w_cy_box, "y")
+    assert cw.cofactors["CD8 (APC-A)"] == 900.0
+
+
+# ----------------------------------------------------------------- axis margin
+def test_the_default_margin_keeps_the_axis_near_the_data(cw):
+    """The axis must not run decades past the last event it has to show."""
+    import cytopy
+    from cytopy.scales import AXIS_MARGIN
+
+    assert cw.margin == AXIS_MARGIN
+    cw.set_cofactor(cw.x, 500.0)
+    j = cytopy.channel_index(cw.adata, cw.x)
+    raw = np.asarray(cw.adata.layers["raw"][:, j]).ravel()
+    top = float(np.sinh(cw.p_x.axes.x_hi) * 500.0)
+    assert top < 2.0 * raw.max()
+
+
+def test_a_wider_margin_widens_the_axis_and_leaves_the_data_alone(cw):
+    cw.set_cofactor(cw.x, 500.0)
+    before = (cw.p_x.axes.x_lo, cw.p_x.axes.x_hi)
+    cw.set_margin(0.4)
+    after = (cw.p_x.axes.x_lo, cw.p_x.axes.x_hi)
+    assert after[0] < before[0] and after[1] > before[1]
+    assert cw.cofactors[cw.x] == pytest.approx(500.0)
+
+
+def test_a_zero_margin_pins_the_axis_to_the_quantiles(cw):
+    cw.set_margin(0.0)
+    d = cw._channel_data(cw.x)
+    c = cw.cofactors[cw.x]
+    assert cw.p_x.axes.x_lo == pytest.approx(float(np.arcsinh(d.q_lo / c)))
+    assert cw.p_x.axes.x_hi == pytest.approx(float(np.arcsinh(d.q_hi / c)))
+
+
+def test_the_margin_slider_drives_it_in_per_cent(cw):
+    cw.w_margin.value = 25
+    cw._margin_changed()
+    assert cw.margin == pytest.approx(0.25)
+    cw.set_margin(0.05)
+    assert cw.w_margin.value == 5
+
+
+@pytest.mark.parametrize("bad", [-0.1, 1.0, 10, float("nan")])
+def test_an_out_of_range_margin_is_refused(cw, bad):
+    with pytest.raises(ValueError, match="margin must be a proportion"):
+        cw.set_margin(bad)
+
+
+# ------------------------------------------------------------------ axis ticks
+def test_untransformed_ticks_label_the_original_units(cw):
+    from cytopy.scales import PretransformedScale
+
+    assert cw.w_ticks.value == "untransformed"
+    cw.set_cofactor(cw.x, 500.0)
+    assert isinstance(cw.p_x.x_scale, PretransformedScale)
+    labels = cw.p_x.x_scale.ticks(cw.p_x.axes.x_lo, cw.p_x.axes.x_hi).labels
+    assert any(lbl.lstrip("-").startswith("10") for lbl in labels)
+
+
+def test_transformed_ticks_label_the_arcsinh_values(cw):
+    from cytopy.scales import LinearScale
+
+    cw.w_ticks.value = "transformed"
+    assert isinstance(cw.p_x.x_scale, LinearScale)
+    labels = cw.p_x.x_scale.ticks(cw.p_x.axes.x_lo, cw.p_x.axes.x_hi).labels
+    # single-digit arcsinh units, not decades of raw signal
+    assert not any(lbl.lstrip("-").startswith("10") for lbl in labels)
+
+
+def test_the_tick_mode_moves_nothing(cw):
+    cw.set_cofactor(cw.x, 500.0)
+    before = (cw.p_x.axes.x_lo, cw.p_x.axes.x_hi, np.array(cw.p_density.image.data, copy=True))
+    cw.w_ticks.value = "transformed"
+    assert (cw.p_x.axes.x_lo, cw.p_x.axes.x_hi) == before[:2]
+    assert np.array_equal(cw.p_density.image.data, before[2])
+
+
+def test_an_unknown_tick_mode_is_refused(demo, make_napari_viewer):
+    from cytopy.cofactors import CofactorWindow
+
+    with pytest.raises(ValueError, match="ticks must be one of"):
+        CofactorWindow(
+            demo,
+            "raw",
+            cofactor_range=RANGE,
+            bins=64,
+            viewer=make_napari_viewer(),
+            ticks="raw units",
+        )
 
 
 def test_relabelling_the_channel_list_does_not_change_the_selected_channel(cw):

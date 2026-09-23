@@ -40,12 +40,31 @@ __all__ = [
     "open_napari",
 ]
 
-TICK_CHOICES = ["auto", "linear"]
+#: How the axes are labelled. ``"untransformed"`` puts the ticks at round
+#: numbers of the channel's original units -- what the detector measured --
+#: which is what makes an arcsinh layer read as biexponential. ``"transformed"``
+#: labels the numbers actually stored in the layer. Neither ever changes the
+#: data or where a point lands; only what is written beside the ticks.
+TICK_CHOICES = ["untransformed", "transformed"]
 
-#: Shape of the four axis-range spin boxes. The bounds are a formality -- wide
-#: enough for any instrument range or transformed value, so that the widget
-#: never refuses a number the axis could legitimately show.
-_LIMIT_FIELD = {"min": -1e12, "max": 1e12, "step": 1.0}
+
+def _resolve_ticks(value: str) -> str:
+    """Validate an axis-tick mode, so a typo is not silently a different axis."""
+    text = str(value)
+    if text not in TICK_CHOICES:
+        raise ValueError(f"ticks must be one of {TICK_CHOICES}, not {value!r}")
+    return text
+
+
+#: How far past the data the axis-range sliders can be dragged, as a fraction
+#: of the data span. The slider has to reach beyond the data or it cannot frame
+#: an outlier with any room around it, and it has to stop somewhere or the
+#: whole travel is spent on empty canvas.
+_SLIDER_OVERSHOOT = 1.0
+
+#: Steps along each axis-range slider. Fine enough that a drag lands where you
+#: meant it to on a 0..1 display axis.
+_SLIDER_STEPS = 1000
 COLORMAPS = ["turbo", "viridis", "magma", "inferno", "gray", "plasma"]
 
 #: Canvas background. White by default: a density plot reads as a flow plot on
@@ -232,17 +251,21 @@ class CytoViewer:
         ``$PnN`` detector (``"FITC-A"``) or a ``$PnS`` marker (``"CD3"``).
         Default to the first two channels in the file.
     ticks
-        ``"auto"`` labels the axes in raw units when the layer knows which
-        transform produced it, and falls back to the stored values otherwise.
-        ``"linear"`` always labels the stored values.
+        How the axes are labelled, one of :data:`TICK_CHOICES`, and changeable
+        in the window afterwards. ``"untransformed"``, the default, labels them
+        in the channel's original units when the layer records which transform
+        produced it, and falls back to the stored values when it does not.
+        ``"transformed"`` always labels the stored values. This is labelling
+        only: neither setting moves a point or changes the data.
     bins
         Resolution of the density image, per axis.
     robust
         Clip the axis range to the 0.1-99.9th percentile, so a handful of
         extreme events (common after compensation) cannot flatten the plot.
-        Events outside the range are not drawn and fall outside any gate. On
-        by default and not exposed in the window, where it was only ever a
-        puzzle.
+        Events outside the range are not drawn and fall outside any gate --
+        which is why this is off by default: on a large panel 0.1% a side is
+        thousands of events, and the rare ones are usually the point. The
+        "clip outliers" checkbox turns it on.
     colormap
         Initial colormap for the density image; one of :data:`COLORMAPS`.
     smooth
@@ -280,11 +303,11 @@ class CytoViewer:
         layer: str | None = None,
         x: str | None = None,
         y: str | None = None,
-        ticks: str = "auto",
+        ticks: str = "untransformed",
         bins: int = 512,
         colormap: str = "turbo",
         smooth: float = 1.0,
-        robust: bool = True,
+        robust: bool = False,
         background: str = DEFAULT_BACKGROUND,
         viewer=None,
         title: str = "cytopy",
@@ -419,6 +442,7 @@ class CytoViewer:
             CheckBox,
             ComboBox,
             Container,
+            FloatRangeSlider,
             FloatSpinBox,
             Label,
             LineEdit,
@@ -441,19 +465,34 @@ class CytoViewer:
         self.w_x = ComboBox(label="x channel", choices=names, value=x)
         self.w_y = ComboBox(label="y channel", choices=names, value=y)
         self.w_swap = PushButton(text="swap x / y")
-        self.w_ticks = ComboBox(label="axis ticks", choices=TICK_CHOICES, value=ticks)
+        self.w_ticks = ComboBox(
+            label="axis ticks", choices=TICK_CHOICES, value=_resolve_ticks(ticks)
+        )
         self.w_transform = Label(value="")
-        # Axis range, in the units the ticks are labelled in -- raw ones on a
-        # transformed axis -- because those are the numbers on the screen next
-        # to the field. They read back the range in use until "apply" pins
-        # them, and "fit" hands the axes back to the data. Applied on a button
-        # rather than on each edit: a spin box emits per keystroke, so typing
-        # "262144" would otherwise redraw at 2, then 26, then 262.
-        self.w_xmin = FloatSpinBox(label="x min", **_LIMIT_FIELD)
-        self.w_xmax = FloatSpinBox(label="x max", **_LIMIT_FIELD)
-        self.w_ymin = FloatSpinBox(label="y min", **_LIMIT_FIELD)
-        self.w_ymax = FloatSpinBox(label="y max", **_LIMIT_FIELD)
-        self.w_limits_apply = PushButton(text="apply range")
+        # Axis range, as one slider per axis holding both ends. In display
+        # coordinates, not the raw units the ticks are labelled in: a logicle
+        # axis is 0..1 across, so the slider's travel is spread evenly over the
+        # plot, where in raw units nearly all of it would be spent inside the
+        # top decade. The label carries the raw equivalent, so the numbers next
+        # to the ticks are still there to read.
+        #
+        # tracking=False so the value lands on release rather than on every
+        # pixel of the drag, which is what the old "apply" button was for.
+        self.w_xrange = FloatRangeSlider(
+            label="x range", min=0.0, max=1.0, value=(0.0, 1.0), tracking=False
+        )
+        self.w_yrange = FloatRangeSlider(
+            label="y range", min=0.0, max=1.0, value=(0.0, 1.0), tracking=False
+        )
+        self.w_clip = CheckBox(
+            label="clip outliers",
+            value=bool(robust),
+            tooltip=(
+                "Fit the axes to the 0.1-99.9th percentile instead of the whole "
+                "data. Events outside the range are not drawn and fall outside "
+                "any gate."
+            ),
+        )
         self.w_autoscale = PushButton(text="fit axes to data")
         samples = (
             [str(v) for v in self.adata.obs["sample"].astype(str).unique()]
@@ -505,11 +544,9 @@ class CytoViewer:
         )
         limits = Container(
             widgets=[
-                self.w_xmin,
-                self.w_xmax,
-                self.w_ymin,
-                self.w_ymax,
-                self.w_limits_apply,
+                self.w_xrange,
+                self.w_yrange,
+                self.w_clip,
                 self.w_autoscale,
             ],
             label="axis range",
@@ -557,7 +594,9 @@ class CytoViewer:
             self.w_lock,
         ):
             w.changed.connect(self._on_change)
-        self.w_limits_apply.changed.connect(self._limits_changed)
+        self.w_xrange.changed.connect(self._limits_changed)
+        self.w_yrange.changed.connect(self._limits_changed)
+        self.w_clip.changed.connect(self._clip_changed)
         self.w_autoscale.changed.connect(self._autoscale_clicked)
         self.w_cmap.changed.connect(self._on_change)
         self.w_background.changed.connect(lambda e: self.set_background(self.w_background.value))
@@ -656,11 +695,27 @@ class CytoViewer:
         self.refresh()
 
     def _limits_changed(self, *_) -> None:
-        """Copy the min/max fields onto the active panel."""
-        self.set_limits(
-            x=(float(self.w_xmin.value), float(self.w_xmax.value)),
-            y=(float(self.w_ymin.value), float(self.w_ymax.value)),
-        )
+        """Copy the range sliders onto the active panel.
+
+        The sliders are already in display coordinates, so this does not go
+        through :meth:`set_limits`, which takes raw units.
+        """
+        if self._updating:
+            return
+        panel = self.panel
+        x_lo, x_hi = (float(v) for v in self.w_xrange.value)
+        panel.x_lim = (x_lo, x_hi) if x_hi > x_lo else None
+        if not panel.histogram:
+            y_lo, y_hi = (float(v) for v in self.w_yrange.value)
+            panel.y_lim = (y_lo, y_hi) if y_hi > y_lo else None
+        self.refresh()
+
+    def _clip_changed(self, *_) -> None:
+        """Turn the percentile clip on or off and refit."""
+        if self._updating:
+            return
+        self._robust = bool(self.w_clip.value)
+        self._autoscale_clicked()
 
     def _autoscale_clicked(self, *_) -> None:
         """Drop both manual ranges and refit to the data."""
@@ -669,25 +724,23 @@ class CytoViewer:
         self.refresh()
 
     def _show_limits(self) -> None:
-        """Write the range actually on screen into the min/max fields.
+        """Write the range actually on screen onto the sliders.
 
         They are a readout as much as an input: after a channel change or a
-        refit they have to show where the axes ended up, or the next edit sends
-        the plot somewhere nobody asked for.
+        refit they have to show where the axes ended up, or the next drag sends
+        the plot somewhere nobody asked for. The bounds move too, because a
+        slider pinned to one channel's extent is unusable on the next.
         """
         panel = self.panel
         axes = panel.axes
         if axes is None:
             return
-        x_lo, x_hi = _raw_range(panel.x_scale, (axes.x_lo, axes.x_hi))
         with self._quiet():
-            self.w_xmin.value, self.w_xmax.value = x_lo, x_hi
+            _set_range_slider(self.w_xrange, panel.x_scale, (axes.x_lo, axes.x_hi), "x")
             if panel.histogram:
-                self.w_ymin.value, self.w_ymax.value = 0.0, float(_MODE_TOP)
+                _set_range_slider(self.w_yrange, None, (0.0, float(_MODE_TOP)), "y")
             else:
-                self.w_ymin.value, self.w_ymax.value = _raw_range(
-                    panel.y_scale, (axes.y_lo, axes.y_hi)
-                )
+                _set_range_slider(self.w_yrange, panel.y_scale, (axes.y_lo, axes.y_hi), "y")
 
     def _panel_changed(self, *_) -> None:
         """Copy the per-panel widgets onto the active panel."""
@@ -786,11 +839,13 @@ class CytoViewer:
         The rule lives in :func:`~cytopy.axis_limits`, so the window and the
         static figures cannot come to disagree about an axis: an untransformed
         channel spans its detector's full ``$PnR``, and everything else spans
-        the data, clipped to the 0.1-99.9th percentile unless the viewer was
-        built with ``robust=False``. Without that clipping a single extreme
-        event -- and compensation makes those -- stretches the axis until
-        everything else is a dot in the corner. It is not a setting because
-        there is no sensible reason to turn it off from the window.
+        the data, widened by :data:`~cytopy.scales.AXIS_MARGIN` at each end.
+
+        The "clip outliers" checkbox trades that for the 0.1-99.9th percentile,
+        which keeps a single extreme event -- and compensation makes those --
+        from stretching the axis until everything else is a dot in the corner.
+        The cost is that the clipped events are not drawn and fall outside
+        every gate, so it is off unless asked for.
         """
         return axis_limits(self.adata, channel, layer, values, robust=self._robust)
 
@@ -840,20 +895,20 @@ class CytoViewer:
         window's own is the **axis ticks** setting, which overrides it.
         """
         layer = self.panel.layer if layer is None else layer
-        if self.w_ticks.value == "linear" or not channel:
+        if self.w_ticks.value == "transformed" or not channel:
             return LinearScale()
         return axis_scale(self.adata, channel, layer)
 
     def _describe_transform(self) -> str:
         layer = self.panel.layer
         info = self.adata.uns.get("cytopy", {})
-        if self.w_ticks.value == "linear":
-            return "ticks: stored values"
+        if self.w_ticks.value == "transformed":
+            return "ticks: transformed values, as stored"
         if layer != "X" and layer == info.get("asinh_layer"):
-            return "ticks: raw units (arcsinh)"
+            return "ticks: untransformed units (arcsinh)"
         if layer != "X" and layer == info.get("logicle_layer"):
-            return "ticks: raw units (logicle)"
-        return "ticks: stored values (layer records no transform)"
+            return "ticks: untransformed units (logicle)"
+        return "ticks: transformed values (layer records no transform)"
 
     @property
     def histogram(self) -> bool:
@@ -1108,8 +1163,7 @@ class CytoViewer:
         for widget in (self.w_y, self.w_swap, self.w_log, self.w_cmap):
             widget.enabled = not histogram
         # A histogram's vertical axis is a fixed per-cent-of-mode scale.
-        for widget in (self.w_ymin, self.w_ymax):
-            widget.enabled = not histogram
+        self.w_yrange.enabled = not histogram
 
     def _draw_axes(self) -> None:
         """Draw a labelled frame around every panel, and the colour bar's ticks."""
@@ -1582,6 +1636,54 @@ def _is_light(colour) -> bool:
     return float(0.2126 * red + 0.7152 * green + 0.0722 * blue) > 0.5
 
 
+def _set_range_slider(widget, scale: Scale | None, span: tuple[float, float], which: str) -> None:
+    """Point a range slider at ``span``, bounds and label included.
+
+    The slider works in display coordinates so its travel is spread evenly
+    across the plot. Its bounds sit :data:`_SLIDER_OVERSHOOT` spans either side
+    of where the axis currently is, so there is always somewhere to drag to,
+    and the label carries the raw-unit equivalent because that is what the tick
+    labels next to it say.
+
+    Parameters
+    ----------
+    widget
+        The ``FloatRangeSlider`` to set.
+    scale
+        The axis's scale, used only to put raw units in the label. ``None``
+        leaves the label without them.
+    span
+        ``(lo, hi)`` in display coordinates -- where the axis actually is.
+    which
+        ``"x"`` or ``"y"``, for the label.
+    """
+    lo, hi = float(span[0]), float(span[1])
+    if not (np.isfinite(lo) and np.isfinite(hi)) or hi <= lo:
+        lo, hi = 0.0, 1.0
+    room = _SLIDER_OVERSHOOT * (hi - lo)
+    # Order matters: widen the bounds before the value, or the value is clamped
+    # to the bounds still in force from the previous channel.
+    widget.min, widget.max = lo - room, hi + room
+    widget.step = (widget.max - widget.min) / _SLIDER_STEPS
+    widget.value = (lo, hi)
+    if scale is None:
+        widget.label = f"{which} range"
+    else:
+        raw_lo, raw_hi = _raw_range(scale, (lo, hi))
+        widget.label = f"{which} range  ({_short(raw_lo)} to {_short(raw_hi)})"
+
+
+def _short(value: float) -> str:
+    """A raw axis bound, short enough to sit in a widget label."""
+    if not np.isfinite(value):
+        return "?"
+    if abs(value) >= 1e5:
+        return f"{value:.3g}"
+    if abs(value) >= 10:
+        return f"{value:,.0f}"
+    return f"{value:.2f}".rstrip("0").rstrip(".")
+
+
 def _raw_range(scale: Scale | None, span: tuple[float, float]) -> tuple[float, float]:
     """A display-coordinate range in the units the ticks are labelled in."""
     if scale is None:
@@ -1776,6 +1878,7 @@ def open_napari(
     y: str | None = None,
     samples: Sequence[str] | None = None,
     names: Sequence[str] | None = None,
+    ticks: str = "untransformed",
     block: bool | None = None,
     verbose: bool = False,
 ) -> ad.AnnData:
@@ -1790,8 +1893,10 @@ def open_napari(
     the data are loaded**, outlined where you drew them and offered as parents,
     so gating is something you come back to rather than do in one sitting.
 
-    The bin count, colour map, axis ticks and background are chosen in the
-    window, so they are not arguments here. The channels and the sample are,
+    The bin count, colour map and background are chosen in the window, so they
+    are not arguments here. ``ticks`` is, because which units you want to read
+    is usually decided before you open anything -- but it is a starting point,
+    and the **axis ticks** box owns it afterwards. The channels and the sample are,
     because knowing what you want to look at before you open it is common
     enough to be worth saving the clicks -- but they are only a starting
     point, and the window owns them afterwards.
@@ -1815,6 +1920,13 @@ def open_napari(
         ``None`` shows every one of them.
     names
         Names for the samples, one per object, overriding whatever they carry.
+    ticks
+        How the axes are labelled to begin with, one of :data:`TICK_CHOICES`.
+        ``"untransformed"``, the default, labels them in the channel's original
+        units when the layer records which transform produced it -- which is
+        what turns an arcsinh layer into an axis that reads as biexponential.
+        ``"transformed"`` labels the numbers actually stored in the layer. The
+        **axis ticks** box changes it in the window.
     block
         Wait for the window to close before returning. The default detects the
         context: ``True`` from a script, ``False`` under IPython, where a Qt
@@ -1840,7 +1952,7 @@ def open_napari(
     if verbose and before:
         print(f"loaded {len(before)} gate(s): {', '.join(before)}")
 
-    _CURRENT = CytoViewer(adata, layer=layer, x=x, y=y)
+    _CURRENT = CytoViewer(adata, layer=layer, x=x, y=y, ticks=ticks)
     if samples is not None:
         _CURRENT.set_plot(samples=samples)
 

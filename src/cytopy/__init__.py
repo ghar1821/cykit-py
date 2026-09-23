@@ -42,7 +42,6 @@ from .spillover import (
 from .transforms import (
     asinh_transform,
     channel_index,
-    estimate_cofactors,
     fluor_channels,
     logicle_transform,
     subsample,
@@ -76,7 +75,6 @@ __all__ = [
     "density_curve",
     "density_image",
     "ellipse_mask",
-    "estimate_cofactors",
     "faded_colormap",
     "filter_events",
     "filter_log",

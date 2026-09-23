@@ -28,8 +28,16 @@ _LN10 = np.log(10.0)
 #: How much of the span to add beyond each end of an axis, by default. A
 #: population sitting against the edge of the data is the normal case in
 #: cytometry -- a negative peak at zero, a saturated one at the top of scale --
-#: and a tight frame cuts it in half. Matches matplotlib's own axis margin.
-AXIS_MARGIN = 0.05
+#: and a tight frame cuts it in half, so a tenth of the span is added at each
+#: end and the axis comes out 20 per cent wider than the data.
+#:
+#: A proportion of the span in *display* coordinates, which is not a proportion
+#: of the raw units: on an arcsinh or logicle axis the span is measured in
+#: decades, so a tenth of it is a tenth of a decade, and the raw value at the
+#: end of the axis moves by rather more than a tenth. This is why the default is
+#: modest -- the transform window's **axis margin** slider is there for a
+#: channel that wants more.
+AXIS_MARGIN = 0.1
 
 
 def pad_range(lo: float, hi: float, frac: float = AXIS_MARGIN) -> tuple[float, float]:

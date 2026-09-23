@@ -13,7 +13,6 @@ from .scales import LogicleScale
 __all__ = [
     "asinh_transform",
     "channel_index",
-    "estimate_cofactors",
     "fluor_channels",
     "logicle_transform",
     "subsample",
@@ -176,58 +175,6 @@ def asinh_transform(
     return adata
 
 
-def estimate_cofactors(
-    adata: ad.AnnData,
-    *,
-    layer: str,
-    channels: Sequence[str] | None = None,
-    quantile: float = 0.05,
-    minimum: float = 1.0,
-) -> dict[str, float]:
-    """Rough per-channel cofactors from the spread of the negative population.
-
-    Uses ``|quantile|`` of the negative values, which puts the linear region of
-    the arcsinh roughly where the noise is. Meant as a starting point to be
-    eyeballed in the viewer, not as a substitute for choosing them by hand.
-
-    Parameters
-    ----------
-    adata
-        Cytometry AnnData.
-    channels
-        Channels to estimate for. Defaults to :func:`fluor_channels`.
-    layer
-        Input layer to read from, by name. Usually ``"comp"``, since cofactors
-        are best estimated from compensated data. Required, so a call always
-        says which matrix it measured.
-    quantile
-        Quantile of the negative values to take as the noise width. Larger
-        values give larger cofactors and a wider linear region.
-    minimum
-        Floor on the returned cofactors, so a channel with no negatives cannot
-        produce a zero.
-
-    Returns
-    -------
-    dict
-        Maps var_name to cofactor, ready to pass to :func:`asinh_transform`.
-    """
-    idx = _resolve_channels(adata, channels)
-    X = _get_matrix(adata, layer)
-    out: dict[str, float] = {}
-    for j in idx:
-        col = X[:, j]
-        col = col[np.isfinite(col)]
-        neg = col[col < 0]
-        if neg.size >= 50:
-            cof = abs(float(np.quantile(neg, quantile)))
-        else:
-            pos = col[col > 0]
-            cof = float(np.quantile(pos, 0.05)) if pos.size else minimum
-        out[str(adata.var_names[j])] = max(cof, minimum)
-    return out
-
-
 # --------------------------------------------------------------------------
 # logicle
 # --------------------------------------------------------------------------
@@ -237,13 +184,18 @@ def logicle_transform(
     layer: str,
     channels: Sequence[str] | None = None,
     key_added: str | None = "logicle",
-    T: float | None = None,
+    T: float | None = 262144.0,
     M: float = 4.5,
-    W: float | None = None,
+    W: float | None = 0.5,
     A: float = 0.0,
     inplace: bool = False,
 ) -> ad.AnnData:
     """Logicle (biexponential) transform, per channel, onto a 0..1 display scale.
+
+    The defaults are flowCore's ``logicleTransform`` defaults -- ``T=262144``,
+    ``W=0.5``, ``M=4.5``, ``A=0`` -- so an untuned call here and an untuned
+    call there put the data on the same scale. ``T=None`` or ``W=None`` swaps
+    that parameter for a per-channel fit to the data.
 
     Parameters
     ----------
@@ -260,13 +212,16 @@ def logicle_transform(
     key_added
         Layer to write. ``None`` overwrites ``adata.X`` instead.
     T
-        Top of scale: the data value that maps to 1.0. Defaults per channel to
-        that channel's maximum.
+        Top of scale: the data value that maps to 1.0. Defaults to 262144, the
+        top of an 18-bit range, matching flowCore's ``logicleTransform``. Pass
+        ``None`` to use each channel's own maximum instead.
     M
         Total number of decades the scale covers.
     W
-        Decades of linearisation around zero. Defaults per channel to a fit
-        against the spread of that channel's negative values; see
+        Decades of linearisation around zero. Defaults to 0.5, again matching
+        flowCore's ``logicleTransform``. Pass ``None`` to fit it per channel
+        against the spread of that channel's negative values -- what
+        flowCore's ``estimateLogicle`` does; see
         :meth:`~cytopy.scales.LogicleScale.from_data`.
     A
         Additional decades of negative data shown below zero.

@@ -427,8 +427,9 @@ def test_an_anndata_without_pnr_falls_back_to_the_data(demo):
     import numpy as np
 
     from cytopy.plotting import axis_limits
+    from cytopy.scales import pad_range
 
     del demo.var["pnr"]
     values = np.asarray(demo[:, "FSC-A"].X).ravel()
-    _, hi = axis_limits(demo, "FSC-A", "X", values)
-    assert hi < float(values.max()) * 1.05
+    limits = axis_limits(demo, "FSC-A", "X", values)
+    assert limits == pad_range(float(values.min()), float(values.max()))

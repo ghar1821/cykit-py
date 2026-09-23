@@ -116,7 +116,7 @@ def axis_limits(
     layer: str | None,
     values: np.ndarray,
     *,
-    robust: bool = True,
+    robust: bool = False,
 ) -> tuple[float, float]:
     """Display-coordinate range for an axis. The same rule the viewer uses.
 
@@ -144,7 +144,9 @@ def axis_limits(
         The values to be shown on this axis, as stored in ``layer``.
     robust
         Clip the fallback range to the 0.1-99.9th percentile, so that a handful
-        of extreme events cannot flatten the plot.
+        of extreme events cannot flatten the plot. Off by default: on a panel
+        of this size 0.1% a side is thousands of events, and they are dropped
+        from the plot and from every gate, not merely pushed out of frame.
 
     Returns
     -------
@@ -157,9 +159,27 @@ def axis_limits(
     if not isinstance(scale, LinearScale):
         return fallback
     span = instrument_range(adata, channel)
-    if span is None or fallback[0] < span[0] or fallback[1] > span[1]:
+    if span is None:
+        return fallback
+    # Whether the detector's range can hold the data is a question about the
+    # data, so it is asked of the unpadded extent. Asking it of `fallback`
+    # would let AXIS_MARGIN decide: pad generously enough and every channel
+    # spills past $PnR, and the scatter channels stop sharing an axis.
+    lo, hi = _extent(values, quantiles)
+    if lo < span[0] or hi > span[1]:
         return fallback
     return pad_range(*span)
+
+
+def _extent(values: np.ndarray, quantiles: tuple[float, float]) -> tuple[float, float]:
+    """The span of ``values`` between ``quantiles``, before any padding."""
+    v = np.asarray(values, dtype=float)
+    v = v[np.isfinite(v)]
+    if v.size == 0:
+        return (0.0, 1.0)
+    lo = float(np.quantile(v, quantiles[0])) if quantiles[0] > 0 else float(v.min())
+    hi = float(np.quantile(v, quantiles[1])) if quantiles[1] < 1 else float(v.max())
+    return (lo, hi)
 
 
 def _apply_ticks(axis, scale: Scale, lo: float, hi: float, which: str) -> None:

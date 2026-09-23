@@ -241,8 +241,18 @@ them to put the ticks at decades of the original units — which is what turns a
 arcsinh layer into a plot that reads as biexponential.
 
 So `layers["asinh"]` gets an axis marked `-10² 0 10² 10³ 10⁴`, while plotting
-raw `X` gets plain linear ticks. Set **axis ticks** to `linear` to see the
-stored numbers instead.
+raw `X` gets plain linear ticks.
+
+**axis ticks** chooses which units you read, in both windows:
+
+| | what the ticks say |
+|---|---|
+| `untransformed` (default) | the channel's original units — `-10² 0 10² 10³ 10⁴` — falling back to the stored values when the layer records no transform |
+| `transformed` | the numbers actually stored in the layer, e.g. single-digit arcsinh units |
+
+It is labelling only: neither setting moves a point or touches the data. Both
+`open_napari` and `open_napari_transform` take `ticks=` to set it up front, and
+the box changes it once the window is open.
 
 ### Choosing cofactors
 
@@ -253,10 +263,8 @@ of each with its own slider — and hands back a dict. It writes nothing to the
 AnnData; applying the answer is still your own `asinh_transform`.
 
 ```python
-estimate = cytopy.estimate_cofactors(adata, layer="comp")   # a starting point, not an answer
-
 cofactors = cytopy.open_napari_transform(
-    adata, "comp", cofactor_range=(100, 20_000), estimate=estimate,
+    adata, "comp", cofactor_range=(100, 20_000),
 )
 cofactors
 # {
@@ -277,17 +285,32 @@ resolution is spent on. The slider is log-spaced across it — a cofactor is a
 scale parameter, so 100→200 is the same step as 3000→6000 — which means
 **narrowing the range is how you get finer control**.
 
+The box beside each slider takes an exact number: type it, press Enter, and the
+slider follows. The slider quantises to a thousandth of its travel, so a value
+typed into the box is kept as you typed it while the slider only moves to the
+nearest step it has — dragging is for finding the answer, the box is for
+pinning it.
+
 Two things make forty channels tractable:
 
 * **Every channel is seeded before you touch anything**, at the geometric
   midpoint of your range. Nothing is ever unset, so moving between channels
   cannot lose a decision. Channels you have moved are marked `●` in the list,
-  the rest `○`, and **set every untouched channel to this** fills in the `○`
-  ones without touching the `●` ones. The real workflow is to settle the bulk
-  value on two or three channels, apply it to the rest, then go hunting for the
-  handful that are wrong.
+  the rest `○`. Type a number into **set every channel to** and press Enter and
+  the whole panel goes to it, marks cleared — they all hold the same value
+  again, so none of them is individually tuned. The real workflow is to settle
+  the bulk value on two or three channels, put it on the panel, then go hunting
+  for the handful that are wrong.
 * **`n` and `p` step through the panel** in file order, so confirming a channel
   is one keystroke.
+
+The axes are labelled in raw units, so the knee line and the cofactor read
+against the same scale; **axis ticks** switches them to the arcsinh values
+being plotted. **axis margin %** is how far past the data the frame runs — a
+tenth of the span at each end by default. Note that the span is in *decades*
+here, so a tenth of it is a tenth of a decade and the raw value at the end of
+the axis moves by considerably more; wind it up only when a peak is sitting on
+the frame.
 
 The y axis defaults to a scatter channel and its slider is greyed out, because
 scatter is never transformed. One axis moves at a time, so a change in the
@@ -385,10 +408,19 @@ come back with it.
   for each.
 * The heading above the plot is `<sample> — <parent gate>`, so it always says
   what you are looking at and what it came from.
-* The axes always clip to the 0.1–99.9th percentile. Without it a single
-  extreme event — and compensation makes those — stretches the axis until
-  everything else is a dot in the corner. Pass `robust=False` to `view` if you
-  really want the full range.
+* **axis range** is one slider per axis, holding both ends. It travels in
+  display coordinates — a logicle axis is 0..1 across, so the slider is spread
+  evenly over the plot instead of spending nearly all its length inside the top
+  decade — and its label carries the raw-unit equivalent. It reads back where
+  the axes are, so it is a readout as much as an input, and it can be dragged
+  well past the data so an outlier can be framed with room around it.
+* The axes hold every event by default, padded generously (`AXIS_MARGIN`, half
+  the data span at each end) so nothing sits against the frame. **clip outliers**
+  trades that for the 0.1–99.9th percentile, which stops a single extreme event
+  — and compensation makes those — stretching the axis until everything else is
+  a dot in the corner. It is off unless asked for, because clipped events are
+  not drawn and fall outside every gate; on a large panel 0.1% a side is
+  thousands of them. `robust=True` to `view` starts with it on.
 * Duplicating the plot's layer in napari does not give a second plot: that
   layer is rewritten on every redraw.
 

@@ -43,7 +43,7 @@ def test_viewer_and_plotting_agree_on_axis_scale(demo, make_napari_viewer):
     demo.layers["untouched"] = demo.X.copy()  # a layer with no recorded transform
 
     cv = CytoViewer(demo, layer="asinh", x=x, y=y, bins=128, viewer=make_napari_viewer())
-    assert cv.w_ticks.value != "linear"  # otherwise the viewer short-circuits
+    assert cv.w_ticks.value != "transformed"  # otherwise the viewer short-circuits
 
     for layer in ("asinh", "logicle", "untouched", "X"):
         for channel in (x, y):
@@ -55,8 +55,8 @@ def test_viewer_and_plotting_agree_on_axis_scale(demo, make_napari_viewer):
             assert _scale_fingerprint(got, 0.0, 5.0) == _scale_fingerprint(want, 0.0, 5.0), where
 
 
-def test_viewer_linear_ticks_override_is_viewer_only(demo, make_napari_viewer):
-    """`axis ticks: linear` is the viewer's own guard, not part of the rule.
+def test_viewer_transformed_ticks_override_is_viewer_only(demo, make_napari_viewer):
+    """`axis ticks: transformed` is the viewer's own guard, not part of the rule.
 
     If this guard ever migrates into the shared function, every static report
     figure silently loses its raw-unit ticks.
@@ -73,7 +73,7 @@ def test_viewer_linear_ticks_override_is_viewer_only(demo, make_napari_viewer):
         demo, layer="asinh", x=x, y="CD19 (PE-A)", bins=128, viewer=make_napari_viewer()
     )
 
-    cv.w_ticks.value = "linear"
+    cv.w_ticks.value = "transformed"
     assert isinstance(cv._axis_scale(x, "asinh"), LinearScale)
     # The shared rule is unaffected by the widget.
     assert not isinstance(axis_scale(demo, x, "asinh"), LinearScale)

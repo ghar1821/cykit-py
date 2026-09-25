@@ -71,9 +71,10 @@ unstained = gated.pop("unstained")
 spill = cytopy.compute_spillover_matrix(gated, unstained=unstained, positive_gate="positive")
 ```
 
-There is no special function for controls — [`cytopy.gate`](#gating) is the same
-one you use on a sample, and it takes the whole dict at once. The controls are
-pooled into one object with a `sample` column, and the **samples** list picks
+There is no special function for controls — [`cytopy.open_napari`](#gating) is
+the same one you use on a sample, and it takes the whole dict at once. The
+controls are pooled into one object with a `sample` column, and the **samples**
+list picks
 which you are looking at. That matters because the gates are not all the same
 kind:
 
@@ -103,8 +104,9 @@ ones. `thresholds=` takes a raw cutoff per control instead.
 The gating is done on an arcsinh display — on a linear axis the whole negative
 population lands in one bin — but **the matrix is computed on the raw values**,
 because spillover is linear and `asinh(a) − asinh(b)` is not proportional to
-`a − b`. Transforming the controls first inflates the coefficients several-fold. The negative reference is the control's own
-negative events by default — same beads, same autofluorescence — or pass
+`a − b`. Transforming the controls first inflates the coefficients
+several-fold. The negative reference is the control's own negative events by
+default — same beads, same autofluorescence — or pass
 `unstained=` to use a universal negative instead. A control that does not split
 into two populations is an error rather than a quietly wrong row.
 
@@ -161,6 +163,16 @@ cytopy.filter_log(adata)
 #      step                                     reason  n_before  n_removed  n_after
 #    debris        outside the scatter gate (4,109 ...     60000       4109    55891
 #      dead                 7AAD positive (3,098 ...     55891       3098    52793
+```
+
+`filter_events` is what writes those rows: it drops the events and notes what
+went, so the next step is handed the survivors and the tally comes with them.
+`record_filter` notes a step without dropping anything, for one you want
+counted but not applied.
+
+```python
+adata = cytopy.filter_events(adata, keep, step="debris",
+                             reason="outside the scatter gate")
 ```
 
 `cytopy.report` turns that, and the plots behind it, into one self-contained
@@ -275,6 +287,13 @@ cofactors
 cytopy.asinh_transform(adata, cofactors, layer="comp", inplace=True)
 ```
 
+What comes back is a `Cofactors`, which is a dict of channel to cofactor and
+goes straight into `asinh_transform`. It remembers a little more than a dict
+does: `.layer` is the matrix the numbers were chosen against, `.untouched()`
+lists the channels still sitting on the value the window seeded them with,
+`.n_adjusted` counts the ones you moved, and `.to_source("COFACTORS")` is the
+assignment that the **copy as a Python dict** button puts on the clipboard.
+
 Note that `layer` here is the **untransformed** matrix, unlike `open_napari`,
 which is pointed at a layer you have already transformed. This window does the
 arcsinh itself.
@@ -334,9 +353,9 @@ re-runnable without the window.
 
 ### Several files at once
 
-`view` takes one object or many. Several are concatenated on the channels they
-share and become entries in the **sample** selector, so one window browses the
-lot:
+`open_napari` takes one object or many. Several are concatenated on the
+channels they share and become entries in the **sample** selector, so one
+window browses the lot:
 
 ```python
 cytopy.open_napari([run1, run2, run3], "asinh")            # AnnData you already have
@@ -350,6 +369,12 @@ merging. **same axes across samples** is on whenever there is more than one:
 without it the axes rescale each time you switch, which is what makes two
 samples look alike when they are not. Turn it off to let each sample fill the
 plot.
+
+Outside a window the same thing is three functions: `read_fcs_dir` reads a
+directory, `concat_samples` stacks objects you already have, and
+`split_samples` takes a concatenation apart again. That last one is how the
+controls above get gated in one window and then handed to
+`compute_spillover_matrix` one tube at a time.
 
 Panels need not match — the intersection of the channels is kept. `uns` comes
 from the first object, so per-file provenance (spillover) beyond
@@ -408,19 +433,21 @@ come back with it.
   for each.
 * The heading above the plot is `<sample> — <parent gate>`, so it always says
   what you are looking at and what it came from.
-* **axis range** is one slider per axis, holding both ends. It travels in
-  display coordinates — a logicle axis is 0..1 across, so the slider is spread
-  evenly over the plot instead of spending nearly all its length inside the top
-  decade — and its label carries the raw-unit equivalent. It reads back where
-  the axes are, so it is a readout as much as an input, and it can be dragged
-  well past the data so an outlier can be framed with room around it.
+* **axis range** is four sliders, one per end. Two handles on one track cannot
+  be told apart once they meet, and the end you wanted is then the one you
+  cannot grab. They travel in display coordinates — a logicle axis is 0..1
+  across, so the travel is spread evenly over the plot instead of being spent
+  almost entirely inside the top decade — and each label carries its raw-unit
+  equivalent. They read back where the axes are, so they are a readout as much
+  as an input, and they can be dragged well past the data to frame an outlier
+  with room around it. **fit axes to data** puts them back.
 * The axes hold every event by default, padded generously (`AXIS_MARGIN`, half
   the data span at each end) so nothing sits against the frame. **clip outliers**
   trades that for the 0.1–99.9th percentile, which stops a single extreme event
   — and compensation makes those — stretching the axis until everything else is
   a dot in the corner. It is off unless asked for, because clipped events are
   not drawn and fall outside every gate; on a large panel 0.1% a side is
-  thousands of them. `robust=True` to `view` starts with it on.
+  thousands of them. `robust=True` to `open_napari` starts with it on.
 * Duplicating the plot's layer in napari does not give a second plot: that
   layer is rewritten on every redraw.
 
@@ -478,6 +505,108 @@ place raw-unit ticks.
 `LogicleScale.from_data` picks `T` and `W` the way FlowJo and flowCore do —
 `W` widens until the linear region covers the spread of the negative
 population.
+
+
+## API reference
+
+Everything below is on the top-level `cytopy` namespace. The names under
+*windows* are the only ones that need napari, and they are imported on first
+use, so `import cytopy` in a script that never opens a window never loads Qt.
+
+### Reading files
+
+| | |
+| --- | --- |
+| `read_fcs(path)` | one FCS file into an AnnData, events x channels |
+| `read_fcs_dir(directory)` | every FCS in a directory, concatenated |
+| `read_controls(directory)` | single-stain controls, each matched to the detector it stains, plus the unstained tube |
+| `read_spillover(path)`, `write_spillover(spill, path)` | a matrix CSV in and out |
+| `concat_samples(adatas)` | stack objects on the channels they share |
+| `split_samples(adata)` | take a concatenation apart, one AnnData per sample |
+| `subset_controls(controls, gate)` | keep only the gated events, in every control |
+
+### Compensation
+
+| | |
+| --- | --- |
+| `compensate(adata, spillover)` | apply a matrix, writing `layers["comp"]` |
+| `compute_spillover_matrix(controls)` | derive one from single-stain controls |
+| `compensation_residuals(controls, spillover)` | what a matrix leaves uncorrected, as a table |
+| `plot_compensation(controls, spillover)` | the same thing to look at |
+
+### Transforms
+
+| | |
+| --- | --- |
+| `asinh_transform(adata, cofactor, layer=)` | `asinh(x / cofactor)`, one cofactor or a dict of them |
+| `logicle_transform(adata, layer=)` | logicle, per channel, onto a 0..1 scale |
+| `subsample(adata, n)` | a random subset of events, optionally per sample |
+| `channel_index(adata, name)` | resolve a marker or detector name to a column |
+| `fluor_channels(adata)` | everything but scatter and time |
+
+### Windows
+
+| | |
+| --- | --- |
+| `open_napari(adata, layer)` | the plotting and gating window; hands the data back |
+| `open_napari_transform(adata, layer, cofactor_range=)` | the cofactor window; hands back a `Cofactors` |
+| `current_viewer()`, `current_transform_window()` | the object behind whichever window was opened last |
+| `CytoViewer`, `CofactorWindow` | the classes, which take a `viewer=` if you want the plot inside a napari window you already have |
+| `Panel` | one plot inside a `CytoViewer`: the napari layers it draws into, and what it is showing |
+| `as_one_anndata(data)` | what both windows do to their first argument |
+| `faded_colormap(name)` | a colormap whose bottom end is transparent rather than dark |
+
+### Gates
+
+| | |
+| --- | --- |
+| `gate_mask(adata, name)` | recompute a gate from the outline it was drawn with |
+| `recompute_gates(adata, name)` | bring its descendants back in line after it moved |
+| `add_gate(adata, name, mask)` | record a gate from a mask you worked out yourself |
+| `gate_record(adata, name)` | its outline, channels, layer and parent, decoded into a `GateRecord` |
+| `gate_stats(adata, name)` | count, percent of file, percent of parent |
+| `gate_order(adata)` | every gate, parents before their children |
+| `gate_children(adata, name)` | the gates nested directly inside one |
+| `polygon_mask`, `ellipse_mask`, `shapes_mask`, `rectangle_to_polygon` | the geometry the gates are built on |
+
+### Filters
+
+| | |
+| --- | --- |
+| `filter_events(adata, keep, step=)` | drop events and record what went, and why |
+| `record_filter(adata, step, keep)` | record the same thing without dropping anything |
+| `filter_log(adata)` | the log as a table, in the order the steps ran |
+
+### Plots and reports
+
+| | |
+| --- | --- |
+| `plot_biaxial(adata, x, y, layer=)` | the static counterpart to the viewer |
+| `plot_gate(adata, name)` | a gate redrawn in the plane it was drawn in |
+| `report(adata, path)` | one self-contained HTML file of what the pipeline did |
+| `gating_pdf(adata, path)` | the hierarchy as a PDF, one plot per gate |
+
+### Density
+
+The two functions the viewer and the static plots share, so a figure matches
+what was on screen.
+
+| | |
+| --- | --- |
+| `density_image(x, y, axes)` | 2-D histogram, oriented for a napari image layer |
+| `density_curve(values, lo, hi, bins)` | 1-D smoothed distribution, for the histogram plot |
+| `Axes2D` | display coordinates to histogram pixels and back |
+
+### Scales
+
+| | |
+| --- | --- |
+| `get_scale(kind, x)` | build one by name, fitted to the data where that helps |
+| `LinearScale`, `LogScale`, `AsinhScale`, `LogicleScale` | the transforms themselves |
+| `PretransformedScale(inner)` | identity on the values, inner scale for the ticks |
+| `Scale` | the base class: `forward`, `inverse`, and where the decade ticks go |
+
+## Examples and tests
 
 
 ```bash

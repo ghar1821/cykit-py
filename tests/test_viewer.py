@@ -1217,36 +1217,155 @@ def test_open_napari_defaults_show_everything(demo, on_fixture_window):
 # --------------------------------------------------------------------------
 # axis range fields
 # --------------------------------------------------------------------------
-def test_the_slider_reads_back_the_range_on_screen(cv):
-    """It is a readout as well as an input, in display coordinates."""
+def test_each_end_of_each_axis_has_its_own_slider(cv):
+    """Four sliders, four values: two handles on one track cannot be separated."""
+    sliders = (cv.w_xmin, cv.w_xmax, cv.w_ymin, cv.w_ymax)
+    assert len({id(w) for w in sliders}) == 4
+    assert [w.label.split()[:2] for w in sliders] == [
+        ["x", "min"],
+        ["x", "max"],
+        ["y", "min"],
+        ["y", "max"],
+    ]
+
+
+def test_the_sliders_read_back_the_range_on_screen(cv):
+    """They are a readout as well as an input, in display coordinates."""
     axes = cv.axes
-    lo, hi = cv.w_xrange.value
-    assert lo == pytest.approx(axes.x_lo, rel=1e-6)
-    assert hi == pytest.approx(axes.x_hi, rel=1e-6)
+    assert float(cv.w_xmin.value) == pytest.approx(axes.x_lo, rel=1e-6)
+    assert float(cv.w_xmax.value) == pytest.approx(axes.x_hi, rel=1e-6)
+    assert float(cv.w_ymin.value) == pytest.approx(axes.y_lo, rel=1e-6)
+    assert float(cv.w_ymax.value) == pytest.approx(axes.y_hi, rel=1e-6)
 
 
-def test_the_slider_label_carries_the_raw_units(cv):
-    """The ticks are labelled in raw units, so the slider says them too."""
+def test_each_slider_label_carries_its_own_raw_value(cv):
+    """The ticks are labelled in raw units, so the sliders say them too."""
     raw_lo, raw_hi = cv.x_scale.to_raw(np.array([cv.axes.x_lo, cv.axes.x_hi]))
-    label = cv.w_xrange.label
-    assert label.startswith("x range")
-    assert f"{raw_hi:,.0f}" in label or f"{raw_hi:.3g}" in label
+    assert cv.w_xmin.label.startswith("x min")
+    assert cv.w_xmax.label.startswith("x max")
+    assert f"{raw_hi:,.0f}" in cv.w_xmax.label or f"{raw_hi:.3g}" in cv.w_xmax.label
+    label = cv.w_xmin.label
     assert str(int(abs(raw_lo)))[:2] in label or f"{raw_lo:.2f}".rstrip("0") in label
 
 
-def test_the_slider_can_be_dragged_past_the_data(cv):
+def test_the_sliders_can_be_dragged_past_the_data(cv):
     """Framing an outlier needs room beyond where the axis currently sits."""
     lo, hi = cv.axes.x_lo, cv.axes.x_hi
-    assert cv.w_xrange.min < lo
-    assert cv.w_xrange.max > hi
+    for widget in (cv.w_xmin, cv.w_xmax):
+        assert widget.min < lo
+        assert widget.max > hi
 
 
-def test_dragging_the_slider_pins_the_axis(cv):
-    """In display coordinates, which is what the slider travels in."""
-    target = (float(cv.axes.x_lo) + 0.1, float(cv.axes.x_hi) - 0.1)
-    cv.w_xrange.value = target
-    assert cv.panel.x_lim == pytest.approx(target)
-    assert (cv.axes.x_lo, cv.axes.x_hi) == pytest.approx(target)
+def test_both_ends_of_an_axis_share_one_travel(cv):
+    """Either end can be dragged anywhere the other can."""
+    assert (cv.w_xmin.min, cv.w_xmin.max) == (cv.w_xmax.min, cv.w_xmax.max)
+    assert (cv.w_ymin.min, cv.w_ymin.max) == (cv.w_ymax.min, cv.w_ymax.max)
+
+
+def test_dragging_a_slider_pins_that_end_of_the_axis(cv):
+    """In display coordinates, which is what the sliders travel in."""
+    lo, hi = float(cv.axes.x_lo), float(cv.axes.x_hi)
+    cv.w_xmin.value = lo + 0.1
+    assert cv.panel.x_lim == pytest.approx((lo + 0.1, hi))
+    assert (cv.axes.x_lo, cv.axes.x_hi) == pytest.approx((lo + 0.1, hi))
+    cv.w_xmax.value = hi - 0.1
+    assert (cv.axes.x_lo, cv.axes.x_hi) == pytest.approx((lo + 0.1, hi - 0.1))
+
+
+def test_the_y_sliders_move_the_y_axis_alone(cv):
+    lo, hi = float(cv.axes.y_lo), float(cv.axes.y_hi)
+    x_before = (cv.axes.x_lo, cv.axes.x_hi)
+    cv.w_ymax.value = hi - 0.2
+    assert (cv.axes.y_lo, cv.axes.y_hi) == pytest.approx((lo, hi - 0.2))
+    assert (cv.axes.x_lo, cv.axes.x_hi) == pytest.approx(x_before)
+
+
+def test_moving_one_end_leaves_the_other_exactly_where_it_was(cv):
+    """A slider holds a rounded copy of its end; reading it back drifts."""
+    lo = float(cv.axes.x_lo)
+    cv.w_xmax.value = float(cv.axes.x_hi) - 0.37
+    assert float(cv.axes.x_lo) == lo
+    hi = float(cv.axes.x_hi)
+    cv.w_xmin.value = lo + 0.21
+    assert float(cv.axes.x_hi) == hi
+
+
+def test_moving_an_end_twice_does_not_drift_the_other(cv):
+    """Rounding is per step, so it only shows up after a few drags."""
+    lo = float(cv.axes.x_lo)
+    for offset in (0.4, 0.31, 0.22):
+        cv.w_xmax.value = float(cv.axes.x_hi) - offset
+        assert float(cv.axes.x_lo) == lo
+
+
+def test_the_travel_holds_still_across_a_redraw(cv):
+    """Bounds that moved with the view sent the handles back to the middle."""
+    before = (cv.w_xmin.min, cv.w_xmin.max)
+    cv.w_xmin.value = float(cv.axes.x_lo) + 0.2
+    assert (cv.w_xmin.min, cv.w_xmin.max) == pytest.approx(before)
+    assert float(cv.w_xmin.value) == pytest.approx(float(cv.axes.x_lo))
+
+
+def test_the_travel_does_not_narrow_under_the_other_handle(cv):
+    """Pinning wide widens it; dragging back in must not move it home again."""
+    cv.set_limits(x=(-1000.0, 1_000_000.0))
+    wide = (cv.w_xmin.min, cv.w_xmin.max)
+    cv.w_xmax.value = float(cv.axes.x_hi) - 1.0
+    assert (cv.w_xmin.min, cv.w_xmin.max) == pytest.approx(wide)
+    assert (cv.w_xmax.min, cv.w_xmax.max) == pytest.approx(wide)
+
+
+def test_fit_to_data_re_measures_the_travel(cv):
+    """A travel a pinned range widened is not one the data asked for."""
+    cv.set_limits(x=(-1000.0, 1_000_000.0))
+    wide = float(cv.w_xmax.max)
+    cv.w_autoscale.changed.emit(None)
+    assert float(cv.w_xmax.max) < wide
+
+
+def test_a_wide_channel_does_not_break_the_next_narrow_one(cv):
+    """The sliders have to survive magicgui rescaling them behind our back.
+
+    magicgui holds a float slider as an integer one times a precision factor,
+    and coarsens the factor to fit a wide range. Setting a step finer than the
+    factor makes it ten times finer again, without bringing the bounds along:
+    the slider is then left refusing the value the axis is sitting at. Time
+    spans its detector, a logicle channel spans about one, so going from one
+    to the other is all it takes.
+    """
+    cv.adata.var.loc["Time", "pnr"] = 1e8
+    cv.w_x.value = "Time"
+    cv.w_x.value = "CD3 (FITC-A)"
+    assert cv.w_xmin.min <= cv.axes.x_lo
+    assert cv.w_xmax.max >= cv.axes.x_hi
+    assert float(cv.w_xmin.value) == pytest.approx(cv.axes.x_lo, abs=0.01)
+    assert float(cv.w_xmax.value) == pytest.approx(cv.axes.x_hi, abs=0.01)
+
+
+def test_changing_channel_re_measures_the_travel(cv):
+    """A travel measured on one channel is unusable on the next."""
+    before = (cv.w_xmin.min, cv.w_xmin.max)
+    cv.w_x.value = "FSC-A"
+    assert (cv.w_xmin.min, cv.w_xmin.max) != pytest.approx(before)
+
+
+def test_dragging_min_past_max_pushes_max_along(cv):
+    """An inverted range would read as "fit the data" and lose the view."""
+    cv.w_xmax.value = float(cv.axes.x_lo) + 0.5
+    top = float(cv.w_xmax.value)
+    cv.w_xmin.value = top + 0.3
+    lo, hi = cv.axes.x_lo, cv.axes.x_hi
+    assert hi > lo
+    assert cv.panel.x_lim is not None
+    assert float(cv.w_xmax.value) > float(cv.w_xmin.value)
+
+
+def test_dragging_max_past_min_pushes_min_along(cv):
+    cv.w_xmin.value = float(cv.axes.x_lo) + 0.5
+    bottom = float(cv.w_xmin.value)
+    cv.w_xmax.value = bottom - 0.3
+    assert cv.axes.x_hi > cv.axes.x_lo
+    assert float(cv.w_xmin.value) < float(cv.w_xmax.value)
 
 
 def test_a_pinned_range_survives_a_redraw(cv):
@@ -1281,7 +1400,7 @@ def test_changing_channel_drops_a_range_typed_for_the_old_one(cv):
 def test_a_histogram_ignores_the_y_range(cv):
     """Its vertical axis is per cent of mode, so the fields are off."""
     cv.set_plot(kind="histogram")
-    assert not cv.w_yrange.enabled
+    assert not cv.w_ymin.enabled and not cv.w_ymax.enabled
     cv.set_limits(y=(-100.0, 10_000.0))
     assert (cv.axes.y_lo, cv.axes.y_hi) == (0.0, 1.0)
 

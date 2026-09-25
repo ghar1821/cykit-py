@@ -65,6 +65,12 @@ _SLIDER_OVERSHOOT = 1.0
 #: Steps along each axis-range slider. Fine enough that a drag lands where you
 #: meant it to on a 0..1 display axis.
 _SLIDER_STEPS = 1000
+
+#: Narrowest an axis may be dragged, as a fraction of a slider's travel.
+#: Dragging "min" past "max" pushes the other end along rather than leaving an
+#: inverted range, which reads as "fit the data" and would throw the view away
+#: in the middle of a drag.
+_MIN_AXIS_SPAN = 0.01
 COLORMAPS = ["turbo", "viridis", "magma", "inferno", "gray", "plasma"]
 
 #: Canvas background. White by default: a density plot reads as a flow plot on
@@ -323,6 +329,10 @@ class CytoViewer:
         self._robust = bool(robust)
         self._derive_colours(background)
         self._updating = False
+        # Data extent, and the slider travel derived from it, per channel: the
+        # sliders have to hold still between redraws. See :meth:`_travel`.
+        self._extents: dict[tuple, tuple[float, float]] = {}
+        self._travel_cache: dict[tuple, tuple[float, float]] = {}
 
         channels = list(adata.var_names)
         if not channels:
@@ -442,7 +452,7 @@ class CytoViewer:
             CheckBox,
             ComboBox,
             Container,
-            FloatRangeSlider,
+            FloatSlider,
             FloatSpinBox,
             Label,
             LineEdit,
@@ -469,21 +479,32 @@ class CytoViewer:
             label="axis ticks", choices=TICK_CHOICES, value=_resolve_ticks(ticks)
         )
         self.w_transform = Label(value="")
-        # Axis range, as one slider per axis holding both ends. In display
-        # coordinates, not the raw units the ticks are labelled in: a logicle
-        # axis is 0..1 across, so the slider's travel is spread evenly over the
-        # plot, where in raw units nearly all of it would be spent inside the
-        # top decade. The label carries the raw equivalent, so the numbers next
-        # to the ticks are still there to read.
+        # Axis range, as one slider per end -- four of them. Two handles on a
+        # single track cannot be told apart once they meet, and the end you
+        # wanted is then the one you cannot grab; a slider each also means the
+        # whole travel is available to each end.
         #
-        # tracking=False so the value lands on release rather than on every
-        # pixel of the drag, which is what the old "apply" button was for.
-        self.w_xrange = FloatRangeSlider(
-            label="x range", min=0.0, max=1.0, value=(0.0, 1.0), tracking=False
-        )
-        self.w_yrange = FloatRangeSlider(
-            label="y range", min=0.0, max=1.0, value=(0.0, 1.0), tracking=False
-        )
+        # They travel in display coordinates, not the raw units the ticks are
+        # labelled in: a logicle axis is 0..1 across, so the travel is spread
+        # evenly over the plot, where in raw units nearly all of it would be
+        # spent inside the top decade. Each label carries its own raw
+        # equivalent, so the numbers beside the ticks are still there to read.
+        #
+        # tracking=False so the value lands when the handle is let go rather
+        # than on every pixel of the drag, which would recompute the density
+        # hundreds of times on the way across.
+        # The bounds here are placeholders: every redraw sets them, and the
+        # values, from where the axis actually is. See `_set_axis_sliders`.
+        end = {
+            "min": 0.0,
+            "max": 1.0,
+            "tracking": False,
+            "tooltip": "Drag and let go; the plot redraws on release.",
+        }
+        self.w_xmin = FloatSlider(label="x min", value=0.0, **end)
+        self.w_xmax = FloatSlider(label="x max", value=1.0, **end)
+        self.w_ymin = FloatSlider(label="y min", value=0.0, **end)
+        self.w_ymax = FloatSlider(label="y max", value=1.0, **end)
         self.w_clip = CheckBox(
             label="clip outliers",
             value=bool(robust),
@@ -544,8 +565,10 @@ class CytoViewer:
         )
         limits = Container(
             widgets=[
-                self.w_xrange,
-                self.w_yrange,
+                self.w_xmin,
+                self.w_xmax,
+                self.w_ymin,
+                self.w_ymax,
                 self.w_clip,
                 self.w_autoscale,
             ],
@@ -594,8 +617,10 @@ class CytoViewer:
             self.w_lock,
         ):
             w.changed.connect(self._on_change)
-        self.w_xrange.changed.connect(self._limits_changed)
-        self.w_yrange.changed.connect(self._limits_changed)
+        self.w_xmin.changed.connect(lambda e: self._limit_slider_changed("x", "min"))
+        self.w_xmax.changed.connect(lambda e: self._limit_slider_changed("x", "max"))
+        self.w_ymin.changed.connect(lambda e: self._limit_slider_changed("y", "min"))
+        self.w_ymax.changed.connect(lambda e: self._limit_slider_changed("y", "max"))
         self.w_clip.changed.connect(self._clip_changed)
         self.w_autoscale.changed.connect(self._autoscale_clicked)
         self.w_cmap.changed.connect(self._on_change)
@@ -694,21 +719,67 @@ class CytoViewer:
             panel.y_lim = _display_range(panel.y_scale, y)
         self.refresh()
 
-    def _limits_changed(self, *_) -> None:
-        """Copy the range sliders onto the active panel.
+    def _axis_sliders(self, axis: str):
+        """The ``(min, max)`` pair of sliders for ``"x"`` or ``"y"``."""
+        if axis == "x":
+            return self.w_xmin, self.w_xmax
+        return self.w_ymin, self.w_ymax
+
+    def _limit_slider_changed(self, axis: str, end: str) -> None:
+        """Copy one end of one axis onto the active panel, and redraw.
 
         The sliders are already in display coordinates, so this does not go
         through :meth:`set_limits`, which takes raw units.
+
+        Parameters
+        ----------
+        axis
+            ``"x"`` or ``"y"``.
+        end
+            ``"min"`` or ``"max"`` -- which slider was moved. The other end is
+            the one that gives way when the two are dragged into each other.
+
+        Notes
+        -----
+        Only the end that moved is read off its slider. The other comes from
+        the axis itself, because a slider holds a rounded copy of it -- a
+        thousand steps across its travel -- and reading that back would shift
+        the end nobody touched by a step every time its neighbour moved.
         """
         if self._updating:
             return
         panel = self.panel
-        x_lo, x_hi = (float(v) for v in self.w_xrange.value)
-        panel.x_lim = (x_lo, x_hi) if x_hi > x_lo else None
-        if not panel.histogram:
-            y_lo, y_hi = (float(v) for v in self.w_yrange.value)
-            panel.y_lim = (y_lo, y_hi) if y_hi > y_lo else None
+        if axis == "y" and panel.histogram:
+            # Per cent of mode, not a channel: nothing for a range to mean.
+            return
+        lo_w, hi_w = self._axis_sliders(axis)
+        lo, hi = self._axis_span(axis)
+        if end == "min":
+            lo = float(lo_w.value)
+        else:
+            hi = float(hi_w.value)
+        floor = _MIN_AXIS_SPAN * (float(lo_w.max) - float(lo_w.min))
+        if hi - lo < floor:
+            # Dragged past the other end: push it along rather than leave an
+            # inverted range, which reads as "fit the data".
+            if end == "min":
+                hi = min(float(hi_w.max), lo + floor)
+                lo = hi - floor
+            else:
+                lo = max(float(lo_w.min), hi - floor)
+                hi = lo + floor
+        setattr(panel, f"{axis}_lim", (lo, hi))
         self.refresh()
+
+    def _axis_span(self, axis: str) -> tuple[float, float]:
+        """Where one axis of the active panel currently sits, in display units."""
+        axes = self.panel.axes
+        if axes is None:
+            lo_w, hi_w = self._axis_sliders(axis)
+            return (float(lo_w.value), float(hi_w.value))
+        if axis == "x":
+            return (float(axes.x_lo), float(axes.x_hi))
+        return (float(axes.y_lo), float(axes.y_hi))
 
     def _clip_changed(self, *_) -> None:
         """Turn the percentile clip on or off and refit."""
@@ -721,26 +792,157 @@ class CytoViewer:
         """Drop both manual ranges and refit to the data."""
         self.panel.x_lim = None
         self.panel.y_lim = None
+        # Fitting the axes refits the sliders: the travel a pinned range had
+        # widened is no longer anything the data asked for.
+        self._forget_travel()
         self.refresh()
+
+    def _forget_travel(self) -> None:
+        """Drop the cached slider travel, so the next redraw re-measures it.
+
+        Anything that moves the data under a channel -- a gate applied or
+        deleted, a refit -- has to go through here, because the cache is keyed
+        by name and those keep their names.
+        """
+        self._extents.clear()
+        self._travel_cache.clear()
 
     def _show_limits(self) -> None:
         """Write the range actually on screen onto the sliders.
 
         They are a readout as much as an input: after a channel change or a
         refit they have to show where the axes ended up, or the next drag sends
-        the plot somewhere nobody asked for. The bounds move too, because a
-        slider pinned to one channel's extent is unusable on the next.
+        the plot somewhere nobody asked for.
         """
         panel = self.panel
         axes = panel.axes
         if axes is None:
             return
         with self._quiet():
-            _set_range_slider(self.w_xrange, panel.x_scale, (axes.x_lo, axes.x_hi), "x")
+            self._set_axis_sliders("x", panel.x_scale, (axes.x_lo, axes.x_hi))
             if panel.histogram:
-                _set_range_slider(self.w_yrange, None, (0.0, float(_MODE_TOP)), "y")
+                top = float(_MODE_TOP)
+                self._set_axis_sliders("y", None, (0.0, top), extent=(0.0, top))
             else:
-                _set_range_slider(self.w_yrange, panel.y_scale, (axes.y_lo, axes.y_hi), "y")
+                self._set_axis_sliders("y", panel.y_scale, (axes.y_lo, axes.y_hi))
+
+    def _set_axis_sliders(
+        self,
+        axis: str,
+        scale: Scale | None,
+        span: tuple[float, float],
+        extent: tuple[float, float] | None = None,
+    ) -> None:
+        """Point one axis's pair of sliders at ``span``, bounds and labels too.
+
+        The travel is measured against the *data*, not against wherever the
+        axis currently sits. Re-deriving it from the view -- which is what this
+        used to do -- moved the handles back to the middle of the track after
+        every drag, so the same gesture meant something different each time and
+        a zoom looked like it had not taken.
+
+        Parameters
+        ----------
+        axis
+            ``"x"`` or ``"y"``.
+        scale
+            The axis's scale, used only to put raw units in the labels.
+            ``None`` leaves them without.
+        span
+            ``(lo, hi)`` in display coordinates -- where the axis actually is.
+        extent
+            Where the data lies, in display coordinates, if it is already
+            known. Looked up from the channel when omitted.
+        """
+        lo, hi = float(span[0]), float(span[1])
+        if not (np.isfinite(lo) and np.isfinite(hi)) or hi <= lo:
+            lo, hi = 0.0, 1.0
+        floor, ceiling = self._travel(axis, (lo, hi), extent)
+        lo_w, hi_w = self._axis_sliders(axis)
+        for widget in (lo_w, hi_w):
+            # Bounds, then step, then bounds again -- and the bounds before the
+            # value, or the value is clamped to the bounds still in force from
+            # the previous channel.
+            #
+            # The second write is not redundant. magicgui keeps a float slider
+            # as an integer one scaled by a precision factor, and coarsens that
+            # factor to fit a wide range into an int (`FloatSlider.
+            # _update_precision`, magicgui 0.10). Setting a step finer than the
+            # factor makes it ten times finer again -- but it rescales the
+            # bounds only on the min/max path, not on the step one, so the
+            # bounds are left reading a tenth of what was asked for. A wide
+            # channel such as Time or FSC coarsens the factor; the next logicle
+            # channel's step, a thousandth of a much smaller range, then trips
+            # it, and the slider refuses the very value the axis is sitting at.
+            widget.min, widget.max = floor, ceiling
+            widget.step = (ceiling - floor) / _SLIDER_STEPS
+            widget.min, widget.max = floor, ceiling
+        # Clamped, so that a widget that still disagrees about its own range
+        # draws a handle in the wrong place rather than stopping the redraw.
+        lo_w.value = float(np.clip(lo, lo_w.min, lo_w.max))
+        hi_w.value = float(np.clip(hi, hi_w.min, hi_w.max))
+        raw_lo, raw_hi = _raw_range(scale, (lo, hi))
+        lo_w.label = f"{axis} min" if scale is None else f"{axis} min  ({_short(raw_lo)})"
+        hi_w.label = f"{axis} max" if scale is None else f"{axis} max  ({_short(raw_hi)})"
+
+    def _travel(
+        self,
+        axis: str,
+        span: tuple[float, float],
+        extent: tuple[float, float] | None = None,
+    ) -> tuple[float, float]:
+        """How far one axis's sliders may be dragged. Cached, and only widens.
+
+        The travel has to come back the same on every redraw or the handles
+        creep across the track while the axis stands still -- and a handle that
+        moves when its neighbour is dragged looks like the two are tied
+        together. So it is worked out once per channel and kept: pinning the
+        view somewhere the data is not can only ever widen it, and it goes back
+        to the data when the channel, the layer or the selection changes.
+
+        Parameters
+        ----------
+        axis
+            ``"x"`` or ``"y"``.
+        span
+            ``(lo, hi)`` the axis is showing, which the travel must cover.
+        extent
+            Where the data lies, if it is already known. Measured from the
+            channel when omitted.
+
+        Returns
+        -------
+        tuple of float
+            ``(floor, ceiling)`` in display coordinates.
+        """
+        panel = self.panel
+        channel = getattr(panel, axis)
+        locked = bool(self.w_lock.value) and bool(panel.samples)
+        key = (
+            axis,
+            channel,
+            panel.layer,
+            panel.histogram,
+            bool(self._robust),
+            () if locked else panel.samples,
+            panel.parent,
+        )
+        if extent is None:
+            extent = self._extents.get(key)
+        if extent is None:
+            mask = self.selection_mask(sample=not locked)
+            extent = (
+                self._limits(channel, self._column(channel, mask, panel.layer), panel.layer)
+                if mask.any()
+                else (0.0, 1.0)
+            )
+        bounds = _slider_bounds(extent, span)
+        was = self._travel_cache.get(key)
+        if was is not None:
+            bounds = (min(bounds[0], was[0]), max(bounds[1], was[1]))
+        self._extents[key] = extent
+        self._travel_cache[key] = bounds
+        return bounds
 
     def _panel_changed(self, *_) -> None:
         """Copy the per-panel widgets onto the active panel."""
@@ -1163,7 +1365,8 @@ class CytoViewer:
         for widget in (self.w_y, self.w_swap, self.w_log, self.w_cmap):
             widget.enabled = not histogram
         # A histogram's vertical axis is a fixed per-cent-of-mode scale.
-        self.w_yrange.enabled = not histogram
+        for widget in (self.w_ymin, self.w_ymax):
+            widget.enabled = not histogram
 
     def _draw_axes(self) -> None:
         """Draw a labelled frame around every panel, and the colour bar's ticks."""
@@ -1454,6 +1657,7 @@ class CytoViewer:
             gone += self.delete_gate(child)
         gates.pop(name, None)
         self.adata.obs.drop(columns=[name], inplace=True, errors="ignore")
+        self._forget_travel()
         if self.panel.parent == name:
             self.panel.parent = "<none>"
         self._refresh_gate_choices()
@@ -1517,6 +1721,7 @@ class CytoViewer:
                 "shape_types": [str(k) for k in self.gates.shape_type],
             },
         )
+        self._forget_travel()
         n = int(mask.sum())
         denom = int(self.selection_mask().sum()) or 1
         note = ""
@@ -1636,41 +1841,27 @@ def _is_light(colour) -> bool:
     return float(0.2126 * red + 0.7152 * green + 0.0722 * blue) > 0.5
 
 
-def _set_range_slider(widget, scale: Scale | None, span: tuple[float, float], which: str) -> None:
-    """Point a range slider at ``span``, bounds and label included.
+def _slider_bounds(extent: tuple[float, float], span: tuple[float, float]) -> tuple[float, float]:
+    """How far an axis's sliders may travel, in display coordinates.
 
-    The slider works in display coordinates so its travel is spread evenly
-    across the plot. Its bounds sit :data:`_SLIDER_OVERSHOOT` spans either side
-    of where the axis currently is, so there is always somewhere to drag to,
-    and the label carries the raw-unit equivalent because that is what the tick
-    labels next to it say.
+    Far enough to cover the data and wherever the axis has been pinned, plus
+    :data:`_SLIDER_OVERSHOOT` spans either side so an outlier can be framed
+    with room around it -- and no further, or the whole travel is spent on
+    empty canvas.
 
     Parameters
     ----------
-    widget
-        The ``FloatRangeSlider`` to set.
-    scale
-        The axis's scale, used only to put raw units in the label. ``None``
-        leaves the label without them.
+    extent
+        ``(lo, hi)`` of the data on this axis.
     span
-        ``(lo, hi)`` in display coordinates -- where the axis actually is.
-    which
-        ``"x"`` or ``"y"``, for the label.
+        ``(lo, hi)`` the axis is showing, which may be outside the data.
     """
-    lo, hi = float(span[0]), float(span[1])
+    lo, hi = float(extent[0]), float(extent[1])
     if not (np.isfinite(lo) and np.isfinite(hi)) or hi <= lo:
-        lo, hi = 0.0, 1.0
-    room = _SLIDER_OVERSHOOT * (hi - lo)
-    # Order matters: widen the bounds before the value, or the value is clamped
-    # to the bounds still in force from the previous channel.
-    widget.min, widget.max = lo - room, hi + room
-    widget.step = (widget.max - widget.min) / _SLIDER_STEPS
-    widget.value = (lo, hi)
-    if scale is None:
-        widget.label = f"{which} range"
-    else:
-        raw_lo, raw_hi = _raw_range(scale, (lo, hi))
-        widget.label = f"{which} range  ({_short(raw_lo)} to {_short(raw_hi)})"
+        lo, hi = float(span[0]), float(span[1])
+    lo, hi = min(lo, float(span[0])), max(hi, float(span[1]))
+    room = _SLIDER_OVERSHOOT * (hi - lo) or 0.5
+    return (lo - room, hi + room)
 
 
 def _short(value: float) -> str:

@@ -9,3 +9,4 @@ dist/
 *.fcs
 *.h5ad
 notebooks/
+.DS_Store

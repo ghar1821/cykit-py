@@ -25,7 +25,7 @@ import numpy as np
 from ._util import layer_matrix, subsample_indices
 from .density import Axes2D, density_curve, density_image
 from .scales import AXIS_MARGIN, AsinhScale, PretransformedScale, pad_range
-from .transforms import channel_index, fluor_channels
+from .transforms import find_channel_name, get_fluor_channels
 
 __all__ = [
     "CofactorWindow",
@@ -279,8 +279,8 @@ def _resolve_range(cofactor_range) -> tuple[float, float]:
 
 
 def _resolve_names(adata: ad.AnnData, channels: Sequence[str] | None) -> list[str]:
-    names = fluor_channels(adata) if channels is None else list(channels)
-    return [str(adata.var_names[channel_index(adata, n)]) for n in names]
+    names = get_fluor_channels(adata) if channels is None else list(channels)
+    return [str(adata.var_names[find_channel_name(adata, n)]) for n in names]
 
 
 def _seed(adata, names, cofactor, lo, hi) -> dict[str, float]:
@@ -299,7 +299,7 @@ def _seed(adata, names, cofactor, lo, hi) -> dict[str, float]:
         if not isinstance(cofactor, Mapping):
             out[name] = float(cofactor)
             continue
-        j = channel_index(adata, name)
+        j = find_channel_name(adata, name)
         chan = str(adata.var["channel"].iloc[j]) if "channel" in adata.var else name
         mark = str(adata.var["marker"].iloc[j]) if "marker" in adata.var else name
         for key in (name, mark, chan):
@@ -378,7 +378,7 @@ class CofactorWindow:
         flow, so it is your prior on where the answer lives. The slider is
         log-spaced across it, so narrowing it is how you get finer control.
     channels
-        Channels to tune. Defaults to :func:`~cytopy.fluor_channels`.
+        Channels to tune. Defaults to :func:`~cytopy.get_fluor_channels`.
     cofactor
         Seed for the sliders: one value for every channel, or a mapping read the
         way :func:`~cytopy.asinh_transform` reads one, including its
@@ -464,9 +464,11 @@ class CofactorWindow:
         self.cofactors = Cofactors(_seed(adata, self.channels, cofactor, lo, hi), layer=self.layer)
         self._ticks = _resolve_ticks(ticks)
         self.margin = _resolve_margin(margin)
-        self.x = str(adata.var_names[channel_index(adata, x)]) if x else self.channels[0]
+        self.x = str(adata.var_names[find_channel_name(adata, x)]) if x else self.channels[0]
         self.y = (
-            str(adata.var_names[channel_index(adata, y)]) if y else _default_y(adata, self.channels)
+            str(adata.var_names[find_channel_name(adata, y)])
+            if y
+            else _default_y(adata, self.channels)
         )
 
         rows = subsample_indices(adata.n_obs, max_events, rng=np.random.default_rng(seed))
@@ -763,14 +765,14 @@ class CofactorWindow:
         Parameters
         ----------
         x
-            Channel to tune, by any alias :func:`~cytopy.channel_index` accepts.
+            Channel to tune, by any alias :func:`~cytopy.find_channel_name` accepts.
         y
             Channel to plot it against.
         """
         if x is not None:
-            self.x = str(self.adata.var_names[channel_index(self.adata, x)])
+            self.x = str(self.adata.var_names[find_channel_name(self.adata, x)])
         if y is not None:
-            self.y = str(self.adata.var_names[channel_index(self.adata, y)])
+            self.y = str(self.adata.var_names[find_channel_name(self.adata, y)])
         self._bind()
         self.refresh()
 
@@ -916,7 +918,7 @@ class CofactorWindow:
             self._cache.move_to_end(channel)
             return hit
 
-        j = channel_index(self.adata, channel)
+        j = find_channel_name(self.adata, channel)
         column = np.asarray(layer_matrix(self.adata, self.layer)[:, j]).ravel()
         full = np.ascontiguousarray(column, dtype=np.float32)
         full = full[np.isfinite(full)]
@@ -1279,7 +1281,7 @@ def open_napari_transform(
         range that suits both mass cytometry and spectral flow. The slider is
         log-spaced across it, so narrowing it is how you get finer control.
     channels
-        Channels to tune. Defaults to :func:`~cytopy.fluor_channels`.
+        Channels to tune. Defaults to :func:`~cytopy.get_fluor_channels`.
     cofactor
         Seed for the sliders: one value for every channel, or a mapping read the
         way :func:`~cytopy.asinh_transform` reads one. ``None`` seeds the

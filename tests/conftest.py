@@ -40,11 +40,24 @@ def true_spillover():
     return spillover_matrix()
 
 
+#: Which control file stains which detector. Named here rather than guessed
+#: from the file names, which is what callers are expected to do too.
+CONTROL_FILES = {
+    "CD3 (FITC-A)": "Compensation Controls_FITC-A.fcs",
+    "CD19 (PE-A)": "Compensation Controls_PE-A.fcs",
+    "CD8 (APC-A)": "Compensation Controls_APC-A.fcs",
+}
+
+
 @pytest.fixture
 def controls(controls_dir):
+    """``(stained, unstained)``, the mapping `compute_spillover_matrix` takes."""
     import cytopy
 
-    return cytopy.read_controls(controls_dir)
+    stained = {
+        detector: cytopy.read_fcs(controls_dir / name) for detector, name in CONTROL_FILES.items()
+    }
+    return stained, cytopy.read_fcs(controls_dir / "Unstained.fcs")
 
 
 @pytest.fixture(autouse=True)

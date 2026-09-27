@@ -12,8 +12,6 @@ import anndata as ad
 import numpy as np
 import pandas as pd
 
-from .spillover import _parse_spillover_keyword
-
 __all__ = ["concat_samples", "read_fcs", "read_fcs_dir", "split_samples"]
 
 # Channels that are not fluorescence measurements and should be excluded from
@@ -34,7 +32,7 @@ def _sanitise_var_name(name: str) -> str:
     ``Delta CoM (SSC (Imaging)/FSC)``.
 
     The original stays in ``var['channel']`` and ``var['label']``, and
-    :func:`~cytopy.transforms.channel_index` still resolves against both, so
+    :func:`~cytopy.transforms.find_channel_name` still resolves against both, so
     looking a channel up by the name the file used keeps working.
     """
     return name.replace("/", "_")
@@ -102,13 +100,75 @@ def _build_var(flow_data, channel_count: int) -> pd.DataFrame:
     return var
 
 
-def _spillover_from_text(text: dict) -> pd.DataFrame | None:
-    """Parse ``$SPILLOVER`` / ``$SPILL`` into a DataFrame indexed by detector."""
+def _spillover_from_text(
+    text: dict, var: pd.DataFrame, *, percent: bool = False
+) -> pd.DataFrame | None:
+    """Parse ``$SPILLOVER`` / ``$SPILL`` into a DataFrame indexed by detector.
+
+    The keyword is a flat comma-separated list: the detector count, then that
+    many ``$PnN`` names, then the matrix row by row. Names are kept exactly as
+    the file wrote them -- they are checked against the channels the file
+    declares, not rewritten to match them.
+
+    A matrix that is malformed is dropped with a warning rather than raised on:
+    the events are still worth having. One that parses but does not look like a
+    spillover matrix -- anything but ``1`` down the diagonal -- is kept as it
+    was found, with a warning. It is not inverted to make it one; deciding what
+    to do with it is :func:`~cytopy.compensate`'s job.
+    """
     lowered = {k.lower().lstrip("$"): v for k, v in text.items()}
     raw = lowered.get("spillover") or lowered.get("spill")
     if not raw:
         return None
-    return _parse_spillover_keyword(raw)
+
+    parts = [p.strip().strip('"') for p in str(raw).split(",")]
+    try:
+        n = int(parts[0])
+    except (ValueError, IndexError):
+        warnings.warn(
+            f"$SPILLOVER does not start with a detector count, ignoring it: {raw[:60]!r}",
+            stacklevel=3,
+        )
+        return None
+    if n <= 0 or len(parts) < 1 + n + n * n:
+        warnings.warn(
+            f"$SPILLOVER claims {n} detectors but holds {len(parts) - 1} further "
+            f"fields, not {n + n * n}; ignoring it",
+            stacklevel=3,
+        )
+        return None
+
+    names = parts[1 : 1 + n]
+    try:
+        values = np.asarray(parts[1 + n : 1 + n + n * n], dtype=float).reshape(n, n)
+    except ValueError:
+        warnings.warn("$SPILLOVER holds non-numeric values, ignoring it", stacklevel=3)
+        return None
+
+    if percent:
+        values = values / 100.0
+
+    known = set(var["channel"]) | set(var.index) | set(var["marker"])
+    unknown = [name for name in names if name not in known]
+    if unknown:
+        warnings.warn(
+            f"$SPILLOVER names {unknown}, which are not channels of this file; "
+            "the matrix is stored as written, so compensating with it will fail "
+            "until the names are corrected",
+            stacklevel=3,
+        )
+
+    diagonal = np.diag(values)
+    if not np.allclose(diagonal, 1.0):
+        warnings.warn(
+            f"$SPILLOVER has {np.array2string(diagonal, precision=4)} on the diagonal, "
+            "not 1, so it is not a spillover matrix as written -- it may be a "
+            "compensation matrix, or be stored as percentages (pass "
+            "convert_spillover=True). Storing it unchanged.",
+            stacklevel=3,
+        )
+
+    return pd.DataFrame(values, index=pd.Index(names), columns=pd.Index(names))
 
 
 def read_fcs(
@@ -120,6 +180,7 @@ def read_fcs(
     store_raw: bool = True,
     dtype: str = "float32",
     ignore_offset_error: bool = False,
+    convert_spillover: bool = False,
 ) -> ad.AnnData:
     """Read a single FCS file into an :class:`~anndata.AnnData`.
 
@@ -157,6 +218,12 @@ def read_fcs(
         Some instruments write offsets that disagree with the TEXT segment;
         the file is usually still readable, so this is the escape hatch for
         one that would otherwise raise.
+    convert_spillover
+        Divide ``$SPILLOVER`` by 100 on the way in, for a file that stores its
+        coefficients as percentages. Off by default, and never inferred from
+        the values: a matrix that is not read the way it was written is wrong
+        in a way nothing downstream can detect. A diagonal of 100 rather than
+        1 is what such a file looks like, and is warned about.
 
     Returns
     -------
@@ -192,7 +259,7 @@ def read_fcs(
     if store_raw:
         adata.layers["raw"] = adata.X.copy()
     adata.uns["fcs"] = {str(k): str(v) for k, v in fd.text.items()}
-    spill = _spillover_from_text(fd.text)
+    spill = _spillover_from_text(fd.text, var, percent=convert_spillover)
     if spill is not None:
         adata.uns["spillover"] = spill
     timestep = adata.uns["fcs"].get("$TIMESTEP") or adata.uns["fcs"].get("timestep")

@@ -29,7 +29,7 @@ from .density import Axes2D, density_curve, density_image
 from .gating import add_gate, gate_children, gate_record, recompute_gates, shapes_mask
 from .plotting import axis_limits, axis_scale
 from .scales import LinearScale, Scale
-from .transforms import channel_index
+from .transforms import find_channel_name
 
 __all__ = [
     "CytoViewer",
@@ -338,8 +338,8 @@ class CytoViewer:
         if not channels:
             raise ValueError("adata has no channels")
         # Accept a marker ("CD3") or a detector ("FITC-A") as well as a var_name.
-        x = channels[channel_index(adata, x)] if x else channels[0]
-        y = channels[channel_index(adata, y)] if y else channels[min(1, len(channels) - 1)]
+        x = channels[find_channel_name(adata, x)] if x else channels[0]
+        y = channels[find_channel_name(adata, y)] if y else channels[min(1, len(channels) - 1)]
 
         self.viewer = viewer if viewer is not None else napari.Viewer(title=title)
         _hide_overlays(self.viewer)
@@ -1085,7 +1085,7 @@ class CytoViewer:
     def _column(self, channel: str, mask: np.ndarray, layer: str | None = None) -> np.ndarray:
         """The stored values for ``channel``. Never transformed here."""
         layer = self.panel.layer if layer is None else layer
-        j = channel_index(self.adata, channel)
+        j = find_channel_name(self.adata, channel)
         col = np.asarray(self._matrix(layer)[:, j], dtype=np.float64).ravel()
         return col[mask]
 
@@ -1714,7 +1714,7 @@ class CytoViewer:
                 "x": str(self.w_x.value),
                 "y": str(self.w_y.value),
                 "layer": str(self.w_layer.value),
-                # In data coordinates, so the gate can be redrawn in a report
+                # In data coordinates, so the gate can be redrawn in a figure
                 # long after the canvas it was drawn on is gone -- and put back
                 # on the canvas to adjust.
                 "vertices": [self.to_display(shape).tolist() for shape in self.gates.data],

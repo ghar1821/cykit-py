@@ -40,10 +40,17 @@ cytopy sample.fcs --compensate --asinh --cofactor 150 -x CD3 -y CD19
 same square DataFrame indexed by detector, with `1` on the diagonal:
 
 ```python
-cytopy.compensate(adata, inplace=True)                  # 1. the file's own $SPILLOVER
-cytopy.compensate(adata, "matrix.csv", inplace=True)    # 2. exported by other software
+import pandas as pd
 
-controls, unstained = cytopy.read_controls("controls/")   # 3. single-stain controls
+cytopy.compensate(adata, inplace=True)                  # 1. the file's own $SPILLOVER
+
+# 2. exported by other software: read the CSV yourself, pass the frame
+cytopy.compensate(adata, pd.read_csv("matrix.csv", index_col=0), inplace=True)
+
+# 3. single-stain controls: you say which file stains which detector
+controls = {"CD3 (FITC-A)": cytopy.read_fcs("controls/FITC-A.fcs"),
+            "CD19 (PE-A)": cytopy.read_fcs("controls/PE-A.fcs")}
+unstained = cytopy.read_fcs("controls/Unstained.fcs")
 spill = cytopy.compute_spillover_matrix(controls, unstained=unstained)
 cytopy.compensate(adata, spill, inplace=True)
 ```
@@ -61,7 +68,6 @@ The positive population is found by splitting the control's stained detector on
 an arcsinh scale (Otsu), or you can gate it yourself:
 
 ```python
-controls, unstained = cytopy.read_controls("controls/")
 everything = {**controls, "unstained": unstained}
 
 pooled = cytopy.open_napari(everything, "asinh")   # ONE window, every control in it
@@ -93,8 +99,9 @@ under *edit gate*, available as parents. Gating is something you come back to.
 
 The scatter pass matters more than it looks: every number in the matrix is a
 median, and a median over cells *and* debris is a median of nothing in
-particular. On a real six-colour panel it took the worst residual from 10.1%
-down to 4.7% before a single positive gate was drawn.
+particular. On a real six-colour panel, gating the controls down to cells took
+the worst coefficient from 10.1% off to 4.7% off — before a single positive
+gate was drawn.
 
 Each control is its own AnnData, so the gate lives in *that* control's
 `obs["positive"]` and the same name works for all of them. A control with no
@@ -110,86 +117,48 @@ default — same beads, same autofluorescence — or pass
 `unstained=` to use a universal negative instead. A control that does not split
 into two populations is an error rather than a quietly wrong row.
 
-`read_controls` matches each file in a directory to the detector it stains by
-name (`FITC-A.fcs`, `Compensation Controls_PE-A.fcs`, `CD3 FITC.fcs` all work,
-against both `$PnN` and `$PnS`), falling back to whichever channel separates
-best. It picks the unstained tube out by name too.
-
 **Adjusting one by hand.** The matrix is a DataFrame, so a coefficient is an
-assignment — and there are two ways to see whether the change helped:
+assignment:
 
 ```python
 spill.loc["CD3 (FITC-A)", "CD19 (PE-A)"] = 0.13
-
-cytopy.compensation_residuals(controls, spill, unstained=unstained)
-#               CD3 (FITC-A)  CD19 (PE-A)  CD8 (APC-A)
-# CD3 (FITC-A)           0.0        0.070       -0.006   <- under-compensated
-# CD19 (PE-A)           -0.0        0.000       -0.000
-
-cytopy.plot_compensation(controls, spill, unstained=unstained)
 ```
 
-A single-stain control compensated correctly has its positive population level
-with its negative one in every detector but its own. `compensation_residuals`
-measures exactly that — it derives a matrix *from the compensated controls*,
-which should come out as the identity, and reports what it is instead. Read a
-cell as the fraction of the dye's signal still leaking: **positive is
-under-compensated, negative is over-compensated**, zero is right.
+To see whether it helped, compensate a control with the new matrix and look at
+it: a single-stain control compensated correctly has its positive population
+level with its negative one in every detector but its own. A population tipping
+up is under-compensated, one sliding down is over.
 
-`plot_compensation` is the same thing to look at: a row per control, a column
-per detector, with a dashed line at the negative population's level. A
-population tipping up is under-compensated, one sliding down is over.
+```python
+control = cytopy.compensate(controls["CD3 (FITC-A)"], spill)
+cytopy.plot_biaxial(control, "CD3 (FITC-A)", "CD19 (PE-A)", layer="comp", cofactor=150)
+```
 
-**From a CSV.** `read_spillover` copes with what the common exporters write:
-with or without a row-name column, comma / tab / semicolon separated, fractions
-or percentages, and names decorated as `Comp-FITC-A` or `FITC-A :: CD3`. Pass
-`inverted=True` if the file holds a compensation matrix rather than a spillover
-matrix. `write_spillover` writes one back out.
+**From a CSV.** There is no reader for this: `compensate` takes a DataFrame, and
+`pd.read_csv(path, index_col=0)` is how you get one. Exporters disagree about
+delimiters, whether there is a row-name column, whether values are fractions or
+percentages, and whether names are decorated as `Comp-FITC-A` or
+`FITC-A :: CD3` — a reader that guesses at all of that gets it wrong silently,
+and a matrix read wrongly is not something anything downstream can detect. You
+can see the file; pandas already has the arguments. Two things to check by
+hand: the diagonal should be `1` (`100` means percentages, divide by 100), and
+the row and column names have to match channels in your data. If the file holds
+a **compensation** matrix — the inverse — invert it yourself with
+`np.linalg.inv` before passing it. `write_spillover` writes one back out.
 
 From the terminal:
 
 ```bash
-cytopy sample.fcs --controls controls/ --asinh
-cytopy sample.fcs --spillover matrix.csv --asinh
+cytopy sample.fcs --compensate --asinh          # the file's own $SPILLOVER
 ```
 
-### Reports
-
-Every step that drops events records what it dropped, so at the end you can
-account for all of them without having kept the intermediates:
-
-```python
-cytopy.filter_log(adata)
-#      step                                     reason  n_before  n_removed  n_after
-#    debris        outside the scatter gate (4,109 ...     60000       4109    55891
-#      dead                 7AAD positive (3,098 ...     55891       3098    52793
-```
-
-`filter_events` is what writes those rows: it drops the events and notes what
-went, so the next step is handed the survivors and the tally comes with them.
-`record_filter` notes a step without dropping anything, for one you want
-counted but not applied.
-
-```python
-adata = cytopy.filter_events(adata, keep, step="debris",
-                             reason="outside the scatter gate")
-```
-
-`cytopy.report` turns that, and the plots behind it, into one self-contained
-HTML file — no assets alongside it, opens anywhere:
-
-```python
-cytopy.report(adata, "qc.html", title="Run 1")
-```
-
-It picks up whatever the data carries: the event tally at each step and every
-gate in the plane it was drawn in. Sections with nothing behind them are left
-out rather than left empty.
+Any other matrix is a Python job, not a flag — reading a foreign CSV and saying
+which control stains which detector are both yours to state.
 
 ### Biaxial plots
 
 `plot_biaxial` is the static counterpart to the viewer — the same smoothed 2-D
-histogram, so a figure in a report matches what was on screen when the gate was
+histogram, so a saved figure matches what was on screen when the gate was
 drawn. **Colour is by event density by default**: at a few million events a
 per-point scatter is neither fast nor readable, and the structure is where
 events pile up.
@@ -441,13 +410,14 @@ come back with it.
   equivalent. They read back where the axes are, so they are a readout as much
   as an input, and they can be dragged well past the data to frame an outlier
   with room around it. **fit axes to data** puts them back.
-* The axes hold every event by default, padded generously (`AXIS_MARGIN`, half
-  the data span at each end) so nothing sits against the frame. **clip outliers**
+* The axes hold every event by default, padded generously (`AXIS_MARGIN`, a
+  tenth of the data span at each end) so nothing sits against the frame. **clip outliers**
   trades that for the 0.1–99.9th percentile, which stops a single extreme event
   — and compensation makes those — stretching the axis until everything else is
   a dot in the corner. It is off unless asked for, because clipped events are
   not drawn and fall outside every gate; on a large panel 0.1% a side is
-  thousands of them. `robust=True` to `open_napari` starts with it on.
+  thousands of them. `CytoViewer(adata, robust=True)` starts with it on;
+  `open_napari` does not take it, so from there it is the checkbox.
 * Duplicating the plot's layer in napari does not give a second plot: that
   layer is rewritten on every redraw.
 
@@ -472,18 +442,27 @@ Gate provenance (channels, layer, parent, counts) is kept in
 | --- | --- |
 | `adata.X` | the working matrix, one row per event; starts as the file's values |
 | `adata.layers["raw"]` | untouched copy of what was read from the file |
-| `adata.var` | `$PnN` channel, `$PnS` marker, range, gain, kind (scatter/fluor/time) |
-| `adata.layers["comp"]` | compensated |
-| `adata.layers["asinh"]` | arcsinh transformed |
+| `adata.var` | `$PnN` channel, `$PnS` marker, `label`, range, gain, kind (scatter/fluor/time) |
+| `adata.var["cofactor"]` | the cofactor `asinh_transform` last used, per channel |
+| `adata.layers["comp"]` | compensated (`compensate`, default `key_added`) |
+| `adata.layers["asinh"]` | arcsinh transformed (`asinh_transform`) |
+| `adata.layers["logicle"]` | logicle transformed (`logicle_transform`) |
 | `adata.obs["sample"]` | source file, for concatenated runs |
+| `adata.obs["file"]` | the path it was read from |
 | `adata.obs[<gate>]` | boolean gate membership |
-| `adata.uns["cytopy"]["filters"]` | what each step removed, and why |
 | `adata.uns["fcs"]` | the raw FCS TEXT keywords |
-| `adata.uns["spillover"]` | `$SPILLOVER` as a DataFrame |
+| `adata.uns["spillover"]` | `$SPILLOVER` as a DataFrame, as the file wrote it |
+| `adata.uns["timestep"]` | `$TIMESTEP`, when the file gives one |
+| `adata.uns["cytopy"]["gates"]` | one record per gate: channels, layer, parent, outline |
+| `adata.uns["cytopy"]["asinh_layers"]` | the cofactors behind *each* arcsinh layer, for the axis ticks |
+| `adata.uns["cytopy"]["logicle_layers"]` | the `T`/`W`/`M`/`A` behind each logicle layer |
+| `adata.uns["cytopy"]["asinh_layer"]`, `["logicle_layer"]` | the layer each transform wrote most recently |
+| `adata.uns["cytopy"]["logicle_params"]` | the logicle parameters of the most recent call |
+| `adata.uns["cytopy"]["compensated_layer"]` | which layer `compensate` last wrote |
 | `adata.uns["cytopy"]["spillover_source"]` | where the applied matrix came from |
 
-Everything round-trips through `adata.write_h5ad(...)` except `uns["spillover"]`
-being restored as a plain array.
+All of it round-trips through `adata.write_h5ad(...)` — gates, transform
+parameters and the spillover DataFrame all come back as they went in.
 
 Reading a file undoes `$PnE` log amplification (analog log amps on older
 instruments store already-logged values; modern files write `$PnE = 0,0` and
@@ -492,6 +471,15 @@ this does nothing). `$PnG` gain is **not** applied unless you pass
 baked into the stored values, matching flowCore's `linearize` default. Both
 follow flowCore exactly: log-undoing only ever runs on `$DATATYPE = I`
 channels, and a channel is never both log-linearised and gain-divided.
+
+`$SPILLOVER` is read as written. Detector names are kept exactly as the file
+spells them and checked against the channels it declares — a name that matches
+nothing is warned about, not renamed. The matrix is stored whatever it holds:
+if the diagonal is not `1` you get a warning saying so, because that means it
+is a compensation matrix, or percentages, or neither, and only you can tell
+which. Nothing is inverted on the way in; that is `compensate`'s job.
+`convert_spillover=True` divides by 100 for a file that stores percentages
+— off by default and never inferred from the values.
 
 ## Scales
 
@@ -519,11 +507,8 @@ use, so `import cytopy` in a script that never opens a window never loads Qt.
 | --- | --- |
 | `read_fcs(path)` | one FCS file into an AnnData, events x channels |
 | `read_fcs_dir(directory)` | every FCS in a directory, concatenated |
-| `read_controls(directory)` | single-stain controls, each matched to the detector it stains, plus the unstained tube |
-| `read_spillover(path)`, `write_spillover(spill, path)` | a matrix CSV in and out |
 | `concat_samples(adatas)` | stack objects on the channels they share |
 | `split_samples(adata)` | take a concatenation apart, one AnnData per sample |
-| `subset_controls(controls, gate)` | keep only the gated events, in every control |
 
 ### Compensation
 
@@ -531,8 +516,8 @@ use, so `import cytopy` in a script that never opens a window never loads Qt.
 | --- | --- |
 | `compensate(adata, spillover)` | apply a matrix, writing `layers["comp"]` |
 | `compute_spillover_matrix(controls)` | derive one from single-stain controls |
-| `compensation_residuals(controls, spillover)` | what a matrix leaves uncorrected, as a table |
-| `plot_compensation(controls, spillover)` | the same thing to look at |
+| `subset_controls(controls, gate)` | keep only the gated events, in every control |
+| `write_spillover(spill, path)` | a matrix out as CSV; read one back with `pd.read_csv(path, index_col=0)` |
 
 ### Transforms
 
@@ -541,8 +526,8 @@ use, so `import cytopy` in a script that never opens a window never loads Qt.
 | `asinh_transform(adata, cofactor, layer=)` | `asinh(x / cofactor)`, one cofactor or a dict of them |
 | `logicle_transform(adata, layer=)` | logicle, per channel, onto a 0..1 scale |
 | `subsample(adata, n)` | a random subset of events, optionally per sample |
-| `channel_index(adata, name)` | resolve a marker or detector name to a column |
-| `fluor_channels(adata)` | everything but scatter and time |
+| `find_channel_name(adata, name)` | resolve a var_name, marker or detector name to its column index |
+| `get_fluor_channels(adata)` | everything but scatter and time |
 
 ### Windows
 
@@ -550,6 +535,7 @@ use, so `import cytopy` in a script that never opens a window never loads Qt.
 | --- | --- |
 | `open_napari(adata, layer)` | the plotting and gating window; hands the data back |
 | `open_napari_transform(adata, layer, cofactor_range=)` | the cofactor window; hands back a `Cofactors` |
+| `Cofactors` | a dict of channel to cofactor, plus `.layer`, `.untouched()`, `.n_adjusted` and `.to_source()` |
 | `current_viewer()`, `current_transform_window()` | the object behind whichever window was opened last |
 | `CytoViewer`, `CofactorWindow` | the classes, which take a `viewer=` if you want the plot inside a napari window you already have |
 | `Panel` | one plot inside a `CytoViewer`: the napari layers it draws into, and what it is showing |
@@ -564,26 +550,18 @@ use, so `import cytopy` in a script that never opens a window never loads Qt.
 | `recompute_gates(adata, name)` | bring its descendants back in line after it moved |
 | `add_gate(adata, name, mask)` | record a gate from a mask you worked out yourself |
 | `gate_record(adata, name)` | its outline, channels, layer and parent, decoded into a `GateRecord` |
+| `GateRecord` | that record: `x`, `y`, `layer`, `parent`, `vertices`, `has_outline()` |
 | `gate_stats(adata, name)` | count, percent of file, percent of parent |
 | `gate_order(adata)` | every gate, parents before their children |
 | `gate_children(adata, name)` | the gates nested directly inside one |
 | `polygon_mask`, `ellipse_mask`, `shapes_mask`, `rectangle_to_polygon` | the geometry the gates are built on |
 
-### Filters
-
-| | |
-| --- | --- |
-| `filter_events(adata, keep, step=)` | drop events and record what went, and why |
-| `record_filter(adata, step, keep)` | record the same thing without dropping anything |
-| `filter_log(adata)` | the log as a table, in the order the steps ran |
-
-### Plots and reports
+### Plots
 
 | | |
 | --- | --- |
 | `plot_biaxial(adata, x, y, layer=)` | the static counterpart to the viewer |
 | `plot_gate(adata, name)` | a gate redrawn in the plane it was drawn in |
-| `report(adata, path)` | one self-contained HTML file of what the pipeline did |
 | `gating_pdf(adata, path)` | the hierarchy as a PDF, one plot per gate |
 
 ### Density

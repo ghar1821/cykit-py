@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from .density import Axes2D, density_curve, density_image
-from .filters import filter_events, filter_log, record_filter
 from .gating import (
     GateRecord,
     add_gate,
@@ -19,8 +18,7 @@ from .gating import (
     shapes_mask,
 )
 from .io import concat_samples, read_fcs, read_fcs_dir, split_samples
-from .plotting import plot_biaxial, plot_compensation, plot_gate
-from .report import gating_pdf, report
+from .plotting import gating_pdf, plot_biaxial, plot_gate
 from .scales import (
     AsinhScale,
     LinearScale,
@@ -32,17 +30,14 @@ from .scales import (
 )
 from .spillover import (
     compensate,
-    compensation_residuals,
     compute_spillover_matrix,
-    read_controls,
-    read_spillover,
     subset_controls,
     write_spillover,
 )
 from .transforms import (
     asinh_transform,
-    channel_index,
-    fluor_channels,
+    find_channel_name,
+    get_fluor_channels,
     logicle_transform,
     subsample,
 )
@@ -65,9 +60,7 @@ __all__ = [
     "add_gate",
     "as_one_anndata",
     "asinh_transform",
-    "channel_index",
     "compensate",
-    "compensation_residuals",
     "compute_spillover_matrix",
     "concat_samples",
     "current_transform_window",
@@ -76,31 +69,25 @@ __all__ = [
     "density_image",
     "ellipse_mask",
     "faded_colormap",
-    "filter_events",
-    "filter_log",
-    "fluor_channels",
+    "find_channel_name",
     "gate_children",
     "gate_mask",
     "gate_order",
     "gate_record",
     "gate_stats",
     "gating_pdf",
+    "get_fluor_channels",
     "get_scale",
     "logicle_transform",
     "open_napari",
     "open_napari_transform",
     "plot_biaxial",
-    "plot_compensation",
     "plot_gate",
     "polygon_mask",
-    "read_controls",
     "read_fcs",
     "read_fcs_dir",
-    "read_spillover",
     "recompute_gates",
-    "record_filter",
     "rectangle_to_polygon",
-    "report",
     "shapes_mask",
     "split_samples",
     "subsample",

@@ -4,9 +4,11 @@ There are three ways to get a matrix, in increasing order of effort:
 
 * the acquisition software already computed one and wrote it into the FCS
   file, where :func:`~cytopy.read_fcs` picks it up as ``adata.uns['spillover']``;
-* some other program exported one, and :func:`read_spillover` reads its CSV;
+* some other program exported one, and you read its CSV into a DataFrame
+  yourself -- ``pd.read_csv(path, index_col=0)`` for the usual layout;
 * you have the single-stain controls, and :func:`compute_spillover_matrix`
-  computes one from them by the Bagwell and Adams method.
+  computes one from them by the Bagwell and Adams method. You say which file
+  stains which detector; nothing here guesses that for you.
 
 All three produce the same thing: a square DataFrame indexed by detector, with
 ``1`` on the diagonal, where ``S[i, j]`` is the fraction of dye *i*'s signal
@@ -15,9 +17,7 @@ that lands in detector *j*. :func:`~cytopy.compensate` takes it from there.
 
 from __future__ import annotations
 
-import io as _io
 import os
-import re
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 
@@ -26,170 +26,26 @@ import numpy as np
 import pandas as pd
 
 from ._util import layer_matrix
-from .transforms import channel_index, fluor_channels
+from .transforms import find_channel_name, get_fluor_channels
 
 __all__ = [
     "compensate",
-    "compensation_residuals",
     "compute_spillover_matrix",
-    "read_controls",
-    "read_spillover",
     "subset_controls",
     "write_spillover",
 ]
-
-# File names a universal negative tends to be given.
-_UNSTAINED_RE = re.compile(r"unstain|unlabel|autofluor|^blank|^neg\b|universal", re.IGNORECASE)
-
-
-def _clean_name(name: object) -> str:
-    """Strip the decoration other software puts on detector names.
-
-    Handles FlowJo's ``Comp-FITC-A`` prefix and its ``FITC-A :: CD3``
-    detector/marker pairs, plus stray quoting and whitespace.
-    """
-    text = str(name).strip().strip('"').strip("'").strip()
-    text = re.split(r"\s*::\s*", text)[0]
-    text = re.sub(r"^comp[-_ ]", "", text, flags=re.IGNORECASE)
-    return text.strip()
-
-
-def _norm(name: object) -> str:
-    """Squash a name to letters and digits, for fuzzy file-name matching."""
-    return re.sub(r"[^a-z0-9]", "", str(name).lower())
-
-
-def _parse_spillover_keyword(raw: str) -> pd.DataFrame | None:
-    """Parse an FCS ``$SPILLOVER`` payload, or return None if it is malformed.
-
-    The keyword is a flat comma-separated list: the detector count, then that
-    many detector names, then the matrix row by row.
-
-    Parameters
-    ----------
-    raw
-        The keyword value, as stored in the TEXT segment.
-
-    Returns
-    -------
-    DataFrame or None
-        Square matrix indexed and columned by detector name.
-    """
-    parts = [p.strip().strip('"') for p in str(raw).split(",")]
-    try:
-        n = int(parts[0])
-    except (ValueError, IndexError):
-        return None
-    if n <= 0 or len(parts) < 1 + n + n * n:
-        return None
-    names = [_clean_name(p) for p in parts[1 : 1 + n]]
-    try:
-        values = np.asarray(parts[1 + n : 1 + n + n * n], dtype=float).reshape(n, n)
-    except ValueError:
-        return None
-    return pd.DataFrame(values, index=names, columns=names)
 
 
 # --------------------------------------------------------------------------
 # reading and writing
 # --------------------------------------------------------------------------
-def read_spillover(
-    path: str | os.PathLike,
-    *,
-    delimiter: str | None = None,
-    percent: bool | None = None,
-    inverted: bool = False,
-) -> pd.DataFrame:
-    """Read a spillover matrix exported by some other software.
-
-    Copes with what the common exporters actually write: with or without a
-    row-name column, comma / tab / semicolon separated, values as fractions or
-    as percentages, detector names decorated as ``Comp-FITC-A`` or
-    ``FITC-A :: CD3``. A file holding a bare ``$SPILLOVER`` keyword payload on
-    one line is also accepted.
-
-    Parameters
-    ----------
-    path
-        CSV/TSV file to read.
-    delimiter
-        Field separator. Sniffed from the first line when ``None``.
-    percent
-        Whether the values are percentages that need dividing by 100. Decided
-        from the diagonal when ``None``, which is right unless the matrix is
-        wildly off-diagonal.
-    inverted
-        Set when the file holds a *compensation* matrix (the inverse of the
-        spillover matrix, which is what a few tools export). It is inverted on
-        the way in so that what comes back is always a spillover matrix.
-
-    Returns
-    -------
-    DataFrame
-        Square, indexed and columned by detector name, ready to hand to
-        :func:`~cytopy.compensate`.
-
-    Raises
-    ------
-    ValueError
-        If the file is empty, is not square, holds non-numeric values, or has
-        a zero on the diagonal.
-    """
-    path = Path(path)
-    text = path.read_text()
-    lines = [ln for ln in text.splitlines() if ln.strip() and not ln.lstrip().startswith("#")]
-    if not lines:
-        raise ValueError(f"{path} is empty")
-
-    if len(lines) == 1:
-        frame = _parse_spillover_keyword(lines[0])
-        if frame is None:
-            raise ValueError(f"{path} has a single line that is not a $SPILLOVER payload")
-    else:
-        if delimiter is None:
-            delimiter = max([",", "\t", ";"], key=lines[0].count)
-        frame = pd.read_csv(_io.StringIO(text), sep=delimiter, engine="python", comment="#")
-        # A leading column of row names is optional. One column more than there
-        # are rows can only be row names; otherwise go by dtype.
-        first = frame.columns[0]
-        if frame.shape[1] == frame.shape[0] + 1 or not pd.api.types.is_numeric_dtype(frame[first]):
-            frame = frame.set_index(first)
-        frame.columns = [_clean_name(c) for c in frame.columns]
-        if isinstance(frame.index, pd.RangeIndex):
-            frame.index = pd.Index(frame.columns)
-        else:
-            frame.index = pd.Index([_clean_name(i) for i in frame.index])
-
-    if frame.shape[0] != frame.shape[1]:
-        raise ValueError(f"{path} is {frame.shape[0]}x{frame.shape[1]}, not square")
-    try:
-        values = frame.to_numpy(dtype=float)
-    except (TypeError, ValueError) as exc:
-        raise ValueError(f"{path} holds non-numeric values: {exc}") from exc
-
-    diagonal = np.diag(values)
-    if percent is None:
-        percent = bool(np.median(diagonal) > 50)
-    if percent:
-        values = values / 100.0
-        diagonal = np.diag(values)
-    if np.any(diagonal == 0):
-        zero = [str(n) for n, d in zip(frame.index, diagonal) if d == 0]
-        raise ValueError(f"{path} has a zero on the diagonal for {zero}")
-    if inverted:
-        values = np.linalg.inv(values)
-
-    return pd.DataFrame(values, index=frame.index, columns=frame.columns)
-
-
 def write_spillover(spillover: pd.DataFrame, path: str | os.PathLike) -> Path:
     """Write a spillover matrix as CSV, with detector names down the first column.
 
     Parameters
     ----------
     spillover
-        Square matrix, as returned by :func:`compute_spillover_matrix` or
-        :func:`read_spillover`.
+        Square matrix, as returned by :func:`compute_spillover_matrix`.
     path
         File to write.
 
@@ -305,7 +161,6 @@ def compute_spillover_matrix(
         Maps detector to its single-stain control — ``{"FITC-A": adata}``, or
         a path to the FCS file instead of an ``AnnData``. The key is resolved
         like any other channel name, so ``$PnS`` markers (``"CD3"``) work too.
-        :func:`read_controls` builds this mapping from a directory.
     unstained
         Universal negative, as an ``AnnData`` or a path. When given, its
         per-channel statistic is the negative reference for every control
@@ -375,15 +230,15 @@ def compute_spillover_matrix(
 
     # Resolve every control key to the reference panel's own channel name, so
     # that "CD3", "FITC-A" and "CD3 (FITC-A)" all name the same row.
-    primary = {key: str(reference.var_names[channel_index(reference, key)]) for key in loaded}
+    primary = {key: str(reference.var_names[find_channel_name(reference, key)]) for key in loaded}
     if len(set(primary.values())) != len(primary):
         raise ValueError(f"two controls resolve to the same detector: {sorted(primary.values())}")
 
     if channels is None:
-        names = [n for n in fluor_channels(reference) if n in set(primary.values())]
+        names = [n for n in get_fluor_channels(reference) if n in set(primary.values())]
         names += [n for n in primary.values() if n not in names]
     else:
-        names = [str(reference.var_names[channel_index(reference, c)]) for c in channels]
+        names = [str(reference.var_names[find_channel_name(reference, c)]) for c in channels]
         missing = sorted(set(primary.values()) - set(names))
         if missing:
             raise ValueError(f"channels omits detectors that have controls: {missing}")
@@ -391,7 +246,7 @@ def compute_spillover_matrix(
     background = None
     if unstained is not None:
         unstained = _as_anndata(unstained)
-        columns = [channel_index(unstained, n) for n in names]
+        columns = [find_channel_name(unstained, n) for n in names]
         matrix = unstained.X if layer is None else unstained.layers[layer]
         background = _stat(np.asarray(matrix, dtype=np.float64)[:, columns], statistic)
 
@@ -401,7 +256,7 @@ def compute_spillover_matrix(
     for key, control in loaded.items():
         detector = primary[key]
         row = names.index(detector)
-        columns = [channel_index(control, n) for n in names]
+        columns = [find_channel_name(control, n) for n in names]
         matrix = np.asarray(
             control.X if layer is None else control.layers[layer], dtype=np.float64
         )[:, columns]
@@ -463,116 +318,6 @@ def compute_spillover_matrix(
     return out
 
 
-def read_controls(
-    directory: str | os.PathLike,
-    *,
-    pattern: str = "*.fcs",
-    recursive: bool = False,
-    unstained: str | None = None,
-    channels: Sequence[str] | None = None,
-    **kwargs,
-) -> tuple[dict[str, ad.AnnData], ad.AnnData | None]:
-    """Read a directory of single-stain controls and work out what each one stains.
-
-    Each file is matched to a detector by its name — ``FITC-A.fcs``,
-    ``Compensation Controls_PE-A.fcs``, ``CD3 FITC.fcs`` all match, punctuation
-    and case ignored, against both ``$PnN`` and ``$PnS``. A file whose name
-    matches nothing falls back to the detector with the widest gap between its
-    positive and negative populations, which is usually the same answer.
-
-    Parameters
-    ----------
-    directory
-        Directory of control files.
-    pattern
-        Glob matched against the file names.
-    recursive
-        Search sub-directories too.
-    unstained
-        Glob matched against file stems to pick out the universal negative.
-        When ``None``, names containing "unstained", "blank" and friends are
-        recognised.
-    channels
-        Detectors to consider. Defaults to :func:`~cytopy.fluor_channels` of
-        the first file read.
-    **kwargs
-        Passed through to :func:`~cytopy.read_fcs` for every file.
-
-    Returns
-    -------
-    tuple
-        ``(controls, unstained)`` — a mapping from detector name to its
-        control, ready for :func:`compute_spillover_matrix`, and the unstained
-        sample if one was found (``None`` otherwise).
-
-    Raises
-    ------
-    FileNotFoundError
-        If nothing matches ``pattern``.
-    ValueError
-        If two files claim the same detector.
-    """
-    from .io import read_fcs
-
-    directory = Path(directory)
-    globber = directory.rglob if recursive else directory.glob
-    paths = sorted(globber(pattern))
-    if not paths:
-        raise FileNotFoundError(f"no files matching {pattern!r} in {directory}")
-
-    negative: ad.AnnData | None = None
-    stained: list[tuple[Path, ad.AnnData]] = []
-    for path in paths:
-        adata = read_fcs(path, **kwargs)
-        is_negative = (
-            Path(path.stem).match(unstained)
-            if unstained is not None
-            else bool(_UNSTAINED_RE.search(path.stem))
-        )
-        if is_negative and negative is None:
-            negative = adata
-        else:
-            stained.append((path, adata))
-
-    controls: dict[str, ad.AnnData] = {}
-    for path, adata in stained:
-        names = list(channels) if channels is not None else fluor_channels(adata)
-        detector = _match_control(path, adata, names)
-        if detector in controls:
-            raise ValueError(f"{path.name} and another file both look like the {detector} control")
-        controls[detector] = adata
-    return controls, negative
-
-
-def _match_control(path: Path, adata: ad.AnnData, names: Sequence[str]) -> str:
-    """Pick the detector a control file stains, by file name then by signal."""
-    stem = _norm(path.stem)
-    best, best_len = None, 0
-    for name in names:
-        j = channel_index(adata, name)
-        candidates = [
-            str(adata.var[col].iloc[j]) for col in ("channel", "marker") if col in adata.var
-        ]
-        for candidate in candidates + [name]:
-            token = _norm(candidate)
-            if len(token) >= 2 and token in stem and len(token) > best_len:
-                best, best_len = name, len(token)
-    if best is not None:
-        return best
-
-    matrix = np.asarray(adata.X, dtype=np.float64)
-    scores = []
-    for name in names:
-        column = matrix[:, channel_index(adata, name)]
-        scores.append(_separation(column, _positive_mask(column, 150.0)[0], min_events=20))
-    if not scores or not np.isfinite(max(scores)):
-        raise ValueError(
-            f"cannot tell which detector {path.name} stains: the name matches none of "
-            f"{list(names)} and no channel splits into two populations"
-        )
-    return str(names[int(np.argmax(scores))])
-
-
 def subset_controls(
     controls: Mapping[str, ad.AnnData], gate: str, *, required: bool = True
 ) -> dict[str, ad.AnnData]:
@@ -622,7 +367,7 @@ def subset_controls(
 
 def compensate(
     adata: ad.AnnData,
-    spillover: pd.DataFrame | np.ndarray | str | os.PathLike | None = None,
+    spillover: pd.DataFrame | np.ndarray | None = None,
     *,
     layer: str = "raw",
     key_added: str = "comp",
@@ -645,9 +390,7 @@ def compensate(
           cover a subset of the channels — as returned by
           :func:`~cytopy.compute_spillover_matrix`, which derives one from
           single-stain controls;
-        * a path to a CSV exported by other software, read with
-          :func:`~cytopy.read_spillover`;
-        * a bare array, assumed to be in :func:`fluor_channels` order.
+        * a bare array, assumed to be in :func:`get_fluor_channels` order.
     layer
         Input layer to read from, by name. Defaults to ``"raw"``: compensation
         undoes crosstalk in the values as acquired, so it belongs on the
@@ -681,11 +424,8 @@ def compensate(
         source = "uns"
     if spillover is None:
         raise ValueError("no spillover matrix given and none found in adata.uns['spillover']")
-    if isinstance(spillover, str | os.PathLike):
-        source = f"csv:{spillover}"
-        spillover = read_spillover(spillover)
     if not isinstance(spillover, pd.DataFrame):
-        names = fluor_channels(adata)
+        names = get_fluor_channels(adata)
         values = np.asarray(spillover, dtype=float)
         if values.ndim != 2 or values.shape[0] != values.shape[1]:
             raise ValueError(f"spillover must be a square matrix, got shape {values.shape}")
@@ -700,8 +440,8 @@ def compensate(
 
     # Rows and columns must describe the same detectors, but need not list them
     # in the same order (or under the same alias), so resolve both and align.
-    cols = [channel_index(adata, c) for c in spillover.columns]
-    rows = [channel_index(adata, r) for r in spillover.index]
+    cols = [find_channel_name(adata, c) for c in spillover.columns]
+    rows = [find_channel_name(adata, r) for r in spillover.index]
     if sorted(rows) != sorted(cols):
         raise ValueError(
             f"spillover rows {list(spillover.index)} and columns {list(spillover.columns)} "
@@ -722,49 +462,3 @@ def compensate(
     cytopy_uns["compensated_layer"] = key_added
     cytopy_uns["spillover_source"] = source
     return adata
-
-
-def compensation_residuals(
-    controls: Mapping[str, ad.AnnData | str | os.PathLike],
-    spillover: pd.DataFrame | np.ndarray | str | os.PathLike,
-    **kwargs,
-) -> pd.DataFrame:
-    """How far a matrix leaves each control from being compensated.
-
-    Compensate a single-stain control correctly and its positive population
-    sits level with its negative one in every detector but its own. Measuring
-    that is the same calculation as deriving a matrix in the first place, so
-    this derives one *from the compensated data*: the answer should be the
-    identity, and whatever it is instead is the error still in the matrix.
-
-    Read a cell as the fraction of the dye's own signal still leaking into that
-    detector. Positive is under-compensated, negative is over-compensated, and
-    the diagonal is always zero by construction.
-
-    Parameters
-    ----------
-    controls
-        Maps detector to its control, as :func:`read_controls` returns.
-    spillover
-        The matrix to test.
-    **kwargs
-        Passed to :func:`compute_spillover_matrix` -- ``unstained``,
-        ``positive_gate``, ``thresholds``, ``statistic`` and the rest, which
-        should match what the matrix was built with.
-
-    Returns
-    -------
-    DataFrame
-        Square, indexed and columned by detector, zero where the matrix is
-        right.
-    """
-    compensated = {key: _as_anndata(value) for key, value in controls.items()}
-    for control in compensated.values():
-        compensate(control, spillover, key_added="_residual", inplace=True)
-    if "unstained" in kwargs and kwargs["unstained"] is not None:
-        kwargs = dict(kwargs)
-        kwargs["unstained"] = compensate(
-            _as_anndata(kwargs["unstained"]), spillover, key_added="_residual"
-        )
-    out = compute_spillover_matrix(compensated, layer="_residual", **kwargs)
-    return out - np.eye(out.shape[0])

@@ -7,22 +7,36 @@ python examples/quickstart.py demo.fcs controls
 from __future__ import annotations
 
 import sys
+from pathlib import Path
 
 import cytopy
+
+#: Which control file stains which detector, for the directory
+#: ``make_demo_fcs.py`` writes. State this yourself: nothing infers it.
+CONTROL_FILES = {
+    "CD3 (FITC-A)": "Compensation Controls_FITC-A.fcs",
+    "CD19 (PE-A)": "Compensation Controls_PE-A.fcs",
+    "CD8 (APC-A)": "Compensation Controls_APC-A.fcs",
+}
+UNSTAINED_FILE = "Unstained.fcs"
 
 
 def main(path: str = "demo.fcs", controls: str | None = None) -> None:
     adata = cytopy.read_fcs(path)
     print(adata)
-    print("fluorescence channels:", cytopy.fluor_channels(adata))
+    print("fluorescence channels:", cytopy.get_fluor_channels(adata))
 
     # Every transform is explicit: the viewer plots whatever layer you point it
     # at, exactly as stored.
     spillover = None
     if controls is not None:
         # No matrix from the instrument? Derive one from the single-stain
-        # controls instead (Bagwell and Adams).
-        stained, unstained = cytopy.read_controls(controls)
+        # controls instead (Bagwell and Adams). The mapping is yours to state.
+        directory = Path(controls)
+        stained = {
+            detector: cytopy.read_fcs(directory / name) for detector, name in CONTROL_FILES.items()
+        }
+        unstained = cytopy.read_fcs(directory / UNSTAINED_FILE)
         spillover = cytopy.compute_spillover_matrix(stained, unstained=unstained)
         print("spillover from controls:\n", spillover.round(4))
     cytopy.compensate(adata, spillover, inplace=True)  # -> layers["comp"]

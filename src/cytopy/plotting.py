@@ -1,9 +1,9 @@
-"""Static matplotlib figures: biaxial plots, gate overlays, and QC lines.
+"""Static matplotlib figures: biaxial plots and gate overlays.
 
-The napari viewer is for looking around; this is for the figures that go into
-a report and stay put. Both draw the same thing the same way -- a smoothed 2-D
-histogram from :func:`~cytopy.density_image` -- so a plot in a report matches
-what was on screen when the gate was drawn.
+The napari viewer is for looking around; this is for the figures that stay
+put. Both draw the same thing the same way -- a smoothed 2-D histogram from
+:func:`~cytopy.density_image` -- so a saved plot matches what was on screen
+when the gate was drawn.
 
 Biaxial plots are coloured by event density by default. At a few million
 events a per-point scatter is neither fast nor readable: the interesting
@@ -12,7 +12,9 @@ structure is where events pile up, and only a density does that honestly.
 
 from __future__ import annotations
 
+import os
 from collections.abc import Sequence
+from pathlib import Path
 
 import anndata as ad
 import numpy as np
@@ -27,9 +29,9 @@ from .scales import (
     Scale,
     pad_range,
 )
-from .transforms import channel_index
+from .transforms import find_channel_name
 
-__all__ = ["plot_biaxial", "plot_compensation", "plot_gate"]
+__all__ = ["gating_pdf", "plot_biaxial", "plot_gate"]
 
 #: Events drawn when a plot colours points individually rather than by density.
 MAX_SCATTER = 50_000
@@ -62,7 +64,7 @@ def axis_scale(adata: ad.AnnData, channel: str, layer: str | None) -> Scale:
     if layer in (None, "", LAYER_X):
         return LinearScale()
     info = adata.uns.get("cytopy", {})
-    j = channel_index(adata, channel)
+    j = find_channel_name(adata, channel)
     name = str(adata.var_names[j])
     # Per-layer first: a file transformed twice keeps both.
     cofactor = info.get("asinh_layers", {}).get(layer, {}).get(name)
@@ -102,7 +104,7 @@ def instrument_range(adata: ad.AnnData, channel: str) -> tuple[float, float] | N
     if "pnr" not in adata.var:
         return None
     try:
-        top = float(adata.var["pnr"].iloc[channel_index(adata, channel)])
+        top = float(adata.var["pnr"].iloc[find_channel_name(adata, channel)])
     except (TypeError, ValueError):
         return None
     if not np.isfinite(top) or top <= 0:
@@ -219,7 +221,7 @@ def plot_biaxial(
     adata
         Events x channels AnnData.
     x, y
-        Channels for the two axes. Any alias :func:`~cytopy.channel_index`
+        Channels for the two axes. Any alias :func:`~cytopy.find_channel_name`
         accepts.
     layer
         Matrix to plot, by name -- ``"raw"``, ``"comp"``, ``"asinh"``, or
@@ -237,7 +239,7 @@ def plot_biaxial(
         only thing that stays readable at millions of events. Otherwise the
         name of a boolean ``obs`` column -- a gate, or the bead mask -- which
         draws that group as points over a grey density of everything else,
-        so a report can show what a step removed.
+        so a figure can show what a step picked out.
     subset
         Boolean mask, or the name of a boolean ``obs`` column, limiting the
         events drawn. ``None`` draws all of them.
@@ -263,9 +265,7 @@ def plot_biaxial(
         ``xlim``/``ylim``.
     xlim, ylim
         Explicit display-coordinate limits, overriding the ones ``robust``
-        would otherwise compute. For sharing one scale across several panels,
-        e.g. the same detector's axis across every control in
-        :func:`plot_compensation`.
+        would otherwise compute, for sharing one scale across several panels.
     title
         Axes title. Defaults to the event count.
     seed
@@ -290,7 +290,7 @@ def plot_biaxial(
         _, ax = plt.subplots(figsize=(4.2, 4.0))
 
     matrix = layer_matrix(adata, layer)
-    xi, yi = channel_index(adata, x), channel_index(adata, y)
+    xi, yi = find_channel_name(adata, x), find_channel_name(adata, y)
     x_name, y_name = str(adata.var_names[xi]), str(adata.var_names[yi])
 
     mask = _resolve_mask(adata, subset)
@@ -466,193 +466,205 @@ def plot_gate(adata: ad.AnnData, name: str, *, layer: str | None = None, ax=None
     return plot_biaxial(adata, record.x, record.y, layer=layer, gate=name, ax=ax, **kwargs)
 
 
-def plot_compensation(
-    controls,
-    spillover,
+def gating_pdf(
+    adata: ad.AnnData,
+    path: str | os.PathLike,
     *,
-    unstained=None,
-    cofactor: float = 150.0,
-    positive_gate: str | None = None,
-    bins: int = 256,
-    max_events: int | None = 100_000,
+    title: str | None = None,
+    ncols: int = 3,
+    per_page: int = 6,
+    subsample: int | None = 200_000,
+    dpi: int = 150,
     seed: int = 0,
     **kwargs,
-):
-    """Each single-stain control after compensation, one panel per detector.
+) -> Path:
+    """Write the gating hierarchy to a PDF, one plot per gate.
 
-    The picture every cytometrist checks a matrix against: the dye on the x
-    axis, another detector on the y, and the positive population level with the
-    negative one. A population that tips up is under-compensated and one that
-    tips down is over-compensated, and the dashed line -- the negative
-    population's level -- is what it should be sitting on.
+    Each gate gets the biaxial it was actually drawn on, showing the events its
+    parent let through, with its own outline over them and the events it kept
+    picked out. Gates come out parents first, so the pages read the way the
+    gating was done.
 
     Parameters
     ----------
-    controls
-        Maps detector to its single-stain control, as
-        :func:`~cytopy.read_controls` returns.
-    spillover
-        The matrix to try, in any form :func:`~cytopy.compensate` accepts.
-    unstained
-        Universal negative, drawn nowhere but used to place the line when a
-        control has no negative events of its own.
-    cofactor
-        Arcsinh cofactor for the display. Display only -- compensation happens
-        on the raw values.
-    positive_gate
-        ``obs`` column marking each control's positive events. Falls back to
-        splitting the stained channel at its midpoint, which is only used to
-        place the reference line.
-    bins
-        Resolution of each panel's density.
-    max_events
-        Events drawn per panel. ``None`` draws all of them; either way, axis
-        ranges are always taken from every event, not just the ones drawn.
+    adata
+        AnnData carrying gates in ``uns['cytopy']['gates']``.
+    path
+        PDF file to write.
+    title
+        Heading for the first page. Defaults to the sample name, or the file's.
+    ncols
+        Plots across a page.
+    per_page
+        Plots on a page. Rounded up to fill whole rows.
+    subsample
+        Events to draw each plot from. ``None`` draws all of them; the default
+        keeps a hierarchy on a run of millions quick without visibly changing
+        a density.
+    dpi
+        Resolution of the figures.
     seed
-        Seed for that per-panel draw, so the same events are plotted each time.
+        Seed for the subsample, so the same events are drawn each time.
     **kwargs
-        Passed to :func:`plot_biaxial`. ``xlim``/``ylim`` are already set by
-        this function -- to the row's own full range on x, and on y to the
-        full range of that detector across every row -- and cannot be
-        overridden here.
+        Passed to :func:`~cytopy.plot_gate`.
 
     Returns
     -------
-    matplotlib.figure.Figure
-        A row per control, a column per detector.
+    Path
+        The file written.
 
     Raises
     ------
     ValueError
-        If ``controls`` is empty.
+        If nothing has been gated, or no gate recorded the plane it was drawn
+        in -- there would be nothing to draw.
     """
+    import matplotlib
+
+    matplotlib.use("Agg", force=False)
+    import matplotlib.pyplot as plt
+    from matplotlib.backends.backend_pdf import PdfPages
+
+    from .gating import gate_order, gate_record
+
+    gates = adata.uns.get("cytopy", {}).get("gates", {})
+    order = gate_order(adata)
+    drawable = [g for g in order if g in adata.obs and gate_record(adata, g).has_outline()]
+    if not drawable:
+        raise ValueError(
+            "no gates with an outline to draw; gates applied from a mask rather "
+            "than drawn record no plane"
+        )
+
+    plotted = _thin_events(adata, subsample, seed)
+    if title is None:
+        title = _default_title(adata)
+    rows = int(np.ceil(per_page / ncols))
+    page_size = rows * ncols
+
+    path = Path(path)
+    with PdfPages(path) as pdf:
+        pdf.savefig(_hierarchy_page(adata, gates, order, title), dpi=dpi)
+        plt.close("all")
+        for start in range(0, len(drawable), page_size):
+            chunk = drawable[start : start + page_size]
+            fig, axes = plt.subplots(rows, ncols, figsize=(3.6 * ncols, 3.5 * rows), squeeze=False)
+            flat = axes.ravel()
+            for ax, name in zip(flat, chunk):
+                _draw_gate_page(plotted, adata, name, ax, plot_gate, kwargs)
+            for ax in flat[len(chunk) :]:
+                ax.set_visible(False)
+            fig.tight_layout()
+            pdf.savefig(fig, dpi=dpi)
+            plt.close(fig)
+    return path
+
+
+def _thin_events(adata: ad.AnnData, subsample: int | None, seed: int = 0) -> ad.AnnData:
+    """A stable subsample for the biaxial plots; a density does not need every event.
+
+    Returns a view rather than a copy: the pages only read from it.
+    """
+    take = subsample_indices(adata.n_obs, subsample, rng=np.random.default_rng(seed))
+    return adata if take is None else adata[take]
+
+
+def _depth(gates: dict, name: str) -> int:
+    depth = 0
+    seen = set()
+    while name and name in gates and name not in seen:
+        seen.add(name)
+        name = str(gates[name].get("parent") or "")
+        depth += 1 if name else 0
+    return depth
+
+
+def _default_title(adata: ad.AnnData) -> str:
+    if "sample" in adata.obs and adata.n_obs:
+        names = adata.obs["sample"].astype(str).unique()
+        if len(names) == 1:
+            return str(names[0])
+    return "gating"
+
+
+def _draw_gate_page(plotted, adata, name, ax, plot_gate, kwargs) -> None:
+    """One gate: its parent's events, its outline, and what it kept.
+
+    The figure itself is :func:`~cytopy.plot_gate`; what this adds is a title
+    naming the lineage and the share kept, counted on the *whole* object rather
+    than the thinned copy the page is drawn from.
+    """
+    from .gating import gate_record
+
+    record = gate_record(adata, name)
+    parent = record.parent
+
+    n = int(adata.obs[name].sum())
+    total = int(adata.obs[parent].sum()) if parent and parent in adata.obs else adata.n_obs
+    share = 100 * n / max(total, 1)
+    lineage = f"{parent} > " if parent else ""
+
+    try:
+        plot_gate(
+            plotted,
+            name,
+            color_by=name if name in plotted.obs else "density",
+            title=f"{lineage}{name}\n{n:,} of {total:,}  ({share:.1f}%)",
+            ax=ax,
+            **kwargs,
+        )
+    except (KeyError, ValueError) as exc:  # pragma: no cover - defensive
+        ax.set_axis_off()
+        ax.text(0.5, 0.5, f"{name}\n{exc}", ha="center", va="center", fontsize=7)
+
+
+def _hierarchy_page(adata, gates, order, title):
+    """A contents page: the tree, with counts and frequencies."""
     import matplotlib.pyplot as plt
 
-    from .spillover import _as_anndata, compensate
+    from .gating import gate_record
 
-    if not controls:
-        raise ValueError("no controls to plot")
-    compensated = {key: _as_anndata(value) for key, value in controls.items()}
-    for control in compensated.values():
-        compensate(control, spillover, key_added="_comp", inplace=True)
-    if unstained is not None:
-        unstained = compensate(unstained, spillover, key_added="_comp")
-    names = list(compensated)
-    first = next(iter(compensated.values()))
-    detectors = [str(first.var_names[channel_index(first, name)]) for name in names]
-    stained = [
-        str(compensated[dye].var_names[channel_index(compensated[dye], dye)]) for dye in names
-    ]
-
-    # One axis range per row and per column, from every event rather than a
-    # percentile, so a plot never lies about how far a population spreads --
-    # and shared across a column so the same detector means the same thing
-    # from row to row instead of each panel silently rescaling itself.
-    row_xlim = [
-        _channel_range(compensated[dye], stained[row], cofactor) for row, dye in enumerate(names)
-    ]
-    col_ylim = [
-        _merge_ranges(
-            _channel_range(compensated[dye], detector, cofactor, pad=False) for dye in names
-        )
-        for detector in detectors
-    ]
-
-    fig, axes = plt.subplots(
-        len(names),
-        len(detectors),
-        figsize=(3.0 * len(detectors), 2.9 * len(names)),
-        squeeze=False,
-    )
-    for row, dye in enumerate(names):
-        adata = compensated[dye]
-        positive = _above_median(adata, stained[row], positive_gate)
-        for col, detector in enumerate(detectors):
-            ax = axes[row][col]
-            plot_biaxial(
-                adata,
-                stained[row],
-                detector,
-                layer="_comp",
-                cofactor=cofactor,
-                bins=bins,
-                subset=_sample_of(adata, max_events, seed),
-                xlim=row_xlim[row],
-                ylim=col_ylim[col],
-                title=f"{dye.split(' (')[0]} → {detector.split(' (')[0]}"
-                if row != col
-                else f"{dye.split(' (')[0]}",
-                ax=ax,
-                **kwargs,
+    rows = []
+    for name in order:
+        parent = gate_record(adata, name).parent
+        n = int(adata.obs[name].sum()) if name in adata.obs else 0
+        total = int(adata.obs[parent].sum()) if parent and parent in adata.obs else adata.n_obs
+        rows.append(
+            (
+                "    " * _depth(gates, name) + name,
+                f"{n:,}",
+                f"{100 * n / max(total, 1):.2f}%",
+                f"{100 * n / max(adata.n_obs, 1):.2f}%",
             )
-            if row == col:
-                continue
-            level = _negative_level(adata, detector, positive, unstained, cofactor)
-            if level is not None:
-                ax.axhline(level, color="#d62728", lw=1.0, ls="--")
-    fig.tight_layout()
-    return fig
+        )
 
-
-def _above_median(adata, stained: str, positive_gate: str | None) -> np.ndarray:
-    """Which events are the stained population, for placing the reference line."""
-    if positive_gate and positive_gate in adata.obs:
-        return np.asarray(adata.obs[positive_gate], dtype=bool)
-    column = np.asarray(adata.layers["_comp"][:, channel_index(adata, stained)], dtype=np.float64)
-    return column > np.median(column)
-
-
-def _channel_range(
-    adata, channel: str, cofactor: float | None, *, pad: bool = True
-) -> tuple[float, float]:
-    """The full display-coordinate span of ``channel``, from every event.
-
-    Unlike :meth:`~cytopy.scales.Scale.limits` with a robust quantile, this
-    never clips -- the point is to show exactly how far a population spreads,
-    not to hide the tail.
-    """
-    values = np.asarray(
-        adata.layers["_comp"][:, channel_index(adata, channel)], dtype=np.float64
-    ).ravel()
-    values = (
-        np.arcsinh(values / cofactor)
-        if cofactor is not None
-        else axis_scale(adata, channel, "_comp").forward(values)
+    height = 1.6 + 0.24 * len(rows)
+    fig, ax = plt.subplots(figsize=(8.3, min(height, 11.0)))
+    ax.set_axis_off()
+    ax.text(0, 1.0, title, fontsize=15, va="top", weight="bold", transform=ax.transAxes)
+    ax.text(
+        0,
+        0.955,
+        f"{adata.n_obs:,} events   {len(rows)} gates",
+        fontsize=9,
+        va="top",
+        color="#666",
+        transform=ax.transAxes,
     )
-    values = values[np.isfinite(values)]
-    if values.size == 0:
-        return (0.0, 1.0)
-    lo, hi = float(values.min()), float(values.max())
-    return pad_range(lo, hi) if pad else (lo, hi)
-
-
-def _merge_ranges(ranges) -> tuple[float, float]:
-    """Combine several unpadded ``(lo, hi)`` spans into one, padded once."""
-    los, his = zip(*ranges)
-    return pad_range(min(los), max(his))
-
-
-def _sample_of(adata, max_events: int | None, seed: int = 0):
-    take = subsample_indices(adata.n_obs, max_events, rng=np.random.default_rng(seed))
-    if take is None:
-        return None
-    mask = np.zeros(adata.n_obs, dtype=bool)
-    mask[take] = True
-    return mask
-
-
-def _negative_level(adata, detector, positive, unstained, cofactor) -> float | None:
-    """Where the positive population should sit: level with the negative one.
-
-    The control's own negatives first -- same beads, same autofluorescence --
-    falling back to a universal negative for a tube that has none of its own.
-    """
-    source, mask = adata, ~positive
-    if int(mask.sum()) < 10:
-        if unstained is None or "_comp" not in unstained.layers:
-            return None
-        source, mask = unstained, np.ones(unstained.n_obs, dtype=bool)
-    values = np.asarray(
-        source.layers["_comp"][:, channel_index(source, detector)], dtype=np.float64
-    )[mask]
-    return float(np.arcsinh(np.median(values) / cofactor))
+    table = ax.table(
+        cellText=rows,
+        colLabels=["gate", "events", "% of parent", "% of total"],
+        colWidths=[0.5, 0.17, 0.17, 0.16],
+        cellLoc="right",
+        loc="upper left",
+        bbox=[0, 0, 1, 0.90],
+    )
+    table.auto_set_font_size(False)
+    table.set_fontsize(8)
+    for (row, col), cell in table.get_celld().items():
+        cell.set_linewidth(0.3)
+        if col == 0:
+            cell.set_text_props(ha="left")
+        if row == 0:
+            cell.set_text_props(weight="bold")
+    return fig

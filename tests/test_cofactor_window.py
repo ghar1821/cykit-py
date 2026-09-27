@@ -56,7 +56,7 @@ def test_the_displayed_values_are_the_stored_values_arcsinh_the_current_cofactor
     import cytopy
 
     cw.set_cofactor(cw.x, 37.0)
-    j = cytopy.channel_index(demo, cw.x)
+    j = cytopy.find_channel_name(demo, cw.x)
     raw = np.asarray(demo.layers["raw"][:, j], dtype=np.float32).ravel()
     shown = cw._channel_data(cw.x).display(37.0)
     assert np.allclose(shown, np.arcsinh(raw / 37.0), atol=1e-6)
@@ -306,7 +306,7 @@ def test_the_default_margin_keeps_the_axis_near_the_data(cw):
 
     assert cw.margin == AXIS_MARGIN
     cw.set_cofactor(cw.x, 500.0)
-    j = cytopy.channel_index(cw.adata, cw.x)
+    j = cytopy.find_channel_name(cw.adata, cw.x)
     raw = np.asarray(cw.adata.layers["raw"][:, j]).ravel()
     top = float(np.sinh(cw.p_x.axes.x_hi) * 500.0)
     assert top < 2.0 * raw.max()
@@ -524,7 +524,7 @@ def test_the_statistics_are_computed_on_every_event_not_the_subsample(demo, make
         viewer=make_napari_viewer(),
     )
     assert window.n_plotted == 1_000
-    j = cytopy.channel_index(demo, window.x)
+    j = cytopy.find_channel_name(demo, window.x)
     column = np.asarray(demo.layers["raw"][:, j], dtype=np.float32).ravel()
     assert window.statistics()["n_negative"] == float((column < 0).sum())
 
@@ -585,7 +585,7 @@ def test_a_channel_with_no_negative_population_says_so(demo, make_napari_viewer)
     from cytopy.cofactors import CofactorWindow
 
     positive = demo.copy()
-    j = cytopy.channel_index(positive, "CD3 (FITC-A)")
+    j = cytopy.find_channel_name(positive, "CD3 (FITC-A)")
     raw = np.asarray(positive.layers["raw"], dtype=np.float32)
     raw[:, j] = np.abs(raw[:, j]) + 1.0
     positive.layers["raw"] = raw
@@ -618,7 +618,7 @@ def test_the_cofactors_go_straight_into_asinh_transform(cw, demo):
 
     out = cytopy.asinh_transform(demo, cw.cofactors, layer="raw")
     for name, cofactor in cw.cofactors.items():
-        j = cytopy.channel_index(out, name)
+        j = cytopy.find_channel_name(out, name)
         assert float(out.var["cofactor"].iloc[j]) == pytest.approx(cofactor)
         raw = np.asarray(out.layers["raw"][:, j], dtype=float)
         assert np.allclose(
@@ -669,7 +669,7 @@ def test_open_napari_transform_returns_the_live_dict_and_leaves_the_data_alone(
     before = _snapshot(demo)
     result = cytopy.open_napari_transform(demo, "raw", cofactor_range=RANGE, bins=64, block=False)
     assert isinstance(result, Cofactors)
-    assert set(result) == set(cytopy.fluor_channels(demo))
+    assert set(result) == set(cytopy.get_fluor_channels(demo))
     assert capsys.readouterr().out == ""  # silent unless asked
 
     window = current_transform_window()

@@ -80,7 +80,7 @@ def test_the_viewer_never_transforms_the_data(cv):
     import cytopy
 
     mask = cv.selection_mask()
-    j = cytopy.channel_index(cv.adata, "CD3 (FITC-A)")
+    j = cytopy.find_channel_name(cv.adata, "CD3 (FITC-A)")
     assert np.allclose(cv._column("CD3 (FITC-A)", mask), cv.adata.layers["asinh"][mask, j])
     # ... and switching the tick mode must not touch the values either
     cv.w_ticks.value = "transformed"
@@ -122,8 +122,8 @@ def test_gate_from_a_rectangle(cv):
     # top-left of the canvas is low x (CD3) and high y (CD19)
     import cytopy
 
-    cd3 = cv.adata.layers["asinh"][:, cytopy.channel_index(cv.adata, "CD3")]
-    cd19 = cv.adata.layers["asinh"][:, cytopy.channel_index(cv.adata, "CD19")]
+    cd3 = cv.adata.layers["asinh"][:, cytopy.find_channel_name(cv.adata, "CD3")]
+    cd19 = cv.adata.layers["asinh"][:, cytopy.find_channel_name(cv.adata, "CD19")]
     assert cd19[mask].mean() > cd19[~mask].mean()
     assert cd3[mask].mean() < cd3[~mask].mean()
     assert cv.adata.uns["cytopy"]["gates"]["B cells"]["x"] == "CD3 (FITC-A)"
@@ -400,7 +400,7 @@ def _truth(adata, layer, x, y, box):
     import cytopy
 
     values = np.asarray(adata.layers[layer])
-    xi, yi = cytopy.channel_index(adata, x), cytopy.channel_index(adata, y)
+    xi, yi = cytopy.find_channel_name(adata, x), cytopy.find_channel_name(adata, y)
     return (
         (values[:, xi] > box[0])
         & (values[:, xi] < box[1])
@@ -605,7 +605,7 @@ def test_a_shape_gates_an_interval_on_a_histogram(cv):
     cv.gates.add_rectangles([_rect(cv, 3.0, 5.0, 0.0, 1.0)])
     mask = cv.current_gate_mask()
 
-    values = np.asarray(cv.adata.layers["asinh"])[:, cytopy.channel_index(cv.adata, "CD3")]
+    values = np.asarray(cv.adata.layers["asinh"])[:, cytopy.find_channel_name(cv.adata, "CD3")]
     expected = (values >= 3.0) & (values <= 5.0)
     assert int(mask.sum()) == int(expected.sum())
     assert np.array_equal(mask, expected)

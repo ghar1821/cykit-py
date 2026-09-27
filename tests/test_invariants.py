@@ -58,7 +58,7 @@ def test_viewer_and_plotting_agree_on_axis_scale(demo, make_napari_viewer):
 def test_viewer_transformed_ticks_override_is_viewer_only(demo, make_napari_viewer):
     """`axis ticks: transformed` is the viewer's own guard, not part of the rule.
 
-    If this guard ever migrates into the shared function, every static report
+    If this guard ever migrates into the shared function, every static
     figure silently loses its raw-unit ticks.
     """
     pytest.importorskip("napari")
@@ -194,8 +194,8 @@ def test_gate_records_survive_h5ad_as_arrays(demo, tmp_path):
     import cytopy
 
     verts = [[500.0, -200.0], [500.0, 2000.0], [20000.0, 2000.0], [20000.0, -200.0]]
-    x = np.asarray(demo.X[:, cytopy.channel_index(demo, "CD3")], dtype=float)
-    y = np.asarray(demo.X[:, cytopy.channel_index(demo, "CD19")], dtype=float)
+    x = np.asarray(demo.X[:, cytopy.find_channel_name(demo, "CD3")], dtype=float)
+    y = np.asarray(demo.X[:, cytopy.find_channel_name(demo, "CD19")], dtype=float)
     mask = cytopy.polygon_mask(np.column_stack([x, y]), np.asarray(verts))
     cytopy.add_gate(
         demo,
@@ -227,7 +227,6 @@ def test_gate_records_survive_h5ad_as_arrays(demo, tmp_path):
     # And the things that read a record all cope.
     assert cytopy.gate_mask(back, "lymphs").sum() == mask.sum()
     cytopy.plot_gate(back, "lymphs")
-    cytopy.report(back, tmp_path / "qc.html")
     cytopy.gating_pdf(back, tmp_path / "gates.pdf")
 
 
@@ -301,17 +300,6 @@ def test_copy_is_gone_as_a_keyword(demo):
     ):
         with pytest.raises(TypeError, match="copy"):
             call()
-
-
-def test_filter_events_keeps_copy_because_it_cannot_work_in_place(demo):
-    """`filter_events` chooses copy vs view; there is no in-place option to offer."""
-    import inspect
-
-    import cytopy
-
-    params = inspect.signature(cytopy.filter_events).parameters
-    assert "copy" in params and "inplace" not in params
-    assert params["copy"].default is True
 
 
 # --------------------------------------------------------------------------

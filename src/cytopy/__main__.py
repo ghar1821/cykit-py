@@ -31,13 +31,8 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--cofactor", type=float, default=150.0)
     p.add_argument("--asinh", action="store_true", help="arcsinh transform, then plot that layer")
     p.add_argument("--logicle", action="store_true", help="logicle transform, then plot that layer")
-    p.add_argument("--compensate", action="store_true", help="apply the $SPILLOVER matrix")
-    p.add_argument("--spillover", type=Path, default=None, help="compensate with a matrix CSV")
     p.add_argument(
-        "--controls",
-        type=Path,
-        default=None,
-        help="directory of single-stain controls; derive the matrix from them and compensate",
+        "--compensate", action="store_true", help="apply the file's own $SPILLOVER matrix"
     )
     p.add_argument("--subsample", type=int, default=0, help="plot at most N events")
     args = p.parse_args(argv)
@@ -49,16 +44,8 @@ def main(argv: list[str] | None = None) -> int:
     print(adata)
 
     layer = "raw"
-    if sum(map(bool, [args.compensate, args.spillover, args.controls])) > 1:
-        p.error("pick one of --compensate / --spillover / --controls")
-    if args.controls:
-        controls, unstained = cytopy.read_controls(args.controls)
-        spillover = cytopy.compute_spillover_matrix(controls, unstained=unstained)
-        print(spillover.round(4))
-    else:
-        spillover = args.spillover
-    if args.compensate or args.spillover or args.controls:
-        cytopy.compensate(adata, spillover, inplace=True)
+    if args.compensate:
+        cytopy.compensate(adata, inplace=True)
         layer = "comp"
     if args.asinh and args.logicle:
         p.error("pick one of --asinh / --logicle")

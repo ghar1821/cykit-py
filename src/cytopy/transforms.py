@@ -12,8 +12,8 @@ from .scales import LogicleScale
 
 __all__ = [
     "asinh_transform",
-    "channel_index",
-    "fluor_channels",
+    "find_channel_name",
+    "get_fluor_channels",
     "logicle_transform",
     "subsample",
 ]
@@ -21,7 +21,7 @@ __all__ = [
 DEFAULT_COFACTOR = {"flow": 150.0, "cytof": 5.0, "spectral": 3000.0}
 
 
-def channel_index(adata: ad.AnnData, name: str) -> int:
+def find_channel_name(adata: ad.AnnData, name: str) -> int:
     """Resolve a channel name to its column index.
 
     Parameters
@@ -56,7 +56,7 @@ def channel_index(adata: ad.AnnData, name: str) -> int:
     raise KeyError(f"channel {name!r} not found; available: {list(adata.var_names)}")
 
 
-def fluor_channels(adata: ad.AnnData) -> list[str]:
+def get_fluor_channels(adata: ad.AnnData) -> list[str]:
     """The fluorescence channels, i.e. everything but scatter and time.
 
     This is the default set that compensation and the transforms act on.
@@ -79,10 +79,10 @@ def fluor_channels(adata: ad.AnnData) -> list[str]:
 
 def _resolve_channels(adata: ad.AnnData, channels: Sequence[str] | None) -> list[int]:
     if channels is None:
-        names = fluor_channels(adata)
+        names = get_fluor_channels(adata)
     else:
         names = list(channels)
-    return [channel_index(adata, n) for n in names]
+    return [find_channel_name(adata, n) for n in names]
 
 
 def _get_matrix(adata: ad.AnnData, layer: str | None) -> np.ndarray:
@@ -202,7 +202,7 @@ def logicle_transform(
     adata
         Cytometry AnnData.
     channels
-        Channels to transform. Defaults to :func:`fluor_channels`; scatter and
+        Channels to transform. Defaults to :func:`get_fluor_channels`; scatter and
         time channels are copied through unchanged.
     layer
         Input layer to read from, by name. ``"raw"`` is what

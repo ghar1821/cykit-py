@@ -398,11 +398,11 @@ def gate_mask(adata: ad.AnnData, name: str) -> np.ndarray:
         raise KeyError(f"gate {name!r} has no outline to recompute from")
 
     from ._util import layer_matrix
-    from .transforms import channel_index
+    from .transforms import find_channel_name
 
     matrix = layer_matrix(adata, record.layer)
-    xi = channel_index(adata, record.x)
-    yi = channel_index(adata, record.y)
+    xi = find_channel_name(adata, record.x)
+    yi = find_channel_name(adata, record.y)
     points = np.column_stack(
         [
             np.asarray(matrix[:, xi], dtype=np.float64).ravel(),

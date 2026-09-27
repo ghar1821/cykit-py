@@ -1,9 +1,6 @@
-"""Static figures, the filter log, and the report that assembles them."""
-
-import re
+"""Static figures: biaxial plots, gate overlays, and the gating PDF."""
 
 import numpy as np
-import pandas as pd
 import pytest
 
 import cytopy
@@ -85,8 +82,8 @@ def test_biaxial_draws_rectangles(demo):
 # gates
 # --------------------------------------------------------------------------
 def _draw_gate(adata, name="lymphs"):
-    x = np.asarray(adata.X[:, cytopy.channel_index(adata, "CD3")], dtype=float)
-    y = np.asarray(adata.X[:, cytopy.channel_index(adata, "CD19")], dtype=float)
+    x = np.asarray(adata.X[:, cytopy.find_channel_name(adata, "CD3")], dtype=float)
+    y = np.asarray(adata.X[:, cytopy.find_channel_name(adata, "CD19")], dtype=float)
     verts = [[500.0, -200.0], [500.0, 2000.0], [20000.0, 2000.0], [20000.0, -200.0]]
     mask = cytopy.polygon_mask(np.column_stack([x, y]), np.asarray(verts))
     cytopy.add_gate(
@@ -122,126 +119,28 @@ def test_a_gate_outline_is_skipped_on_the_wrong_axes(demo):
 
 
 # --------------------------------------------------------------------------
-# the filter log
+# what survives a round trip
 # --------------------------------------------------------------------------
-def test_filter_events_records_what_went(demo):
-    keep = np.arange(demo.n_obs) % 2 == 0
-    out = cytopy.filter_events(demo, keep, step="every other", reason="for the sake of it")
-    assert out.n_obs == 30_000
-    log = cytopy.filter_log(out)
-    assert list(log["step"]) == ["every other"]
-    assert log.iloc[0].to_dict() == {
-        "step": "every other",
-        "reason": "for the sake of it",
-        "n_before": 60_000,
-        "n_removed": 30_000,
-        "pct_removed": 50.0,
-        "n_after": 30_000,
-    }
-
-
-def test_the_log_accumulates_and_survives_filtering(demo):
-    first = cytopy.filter_events(demo, np.arange(demo.n_obs) < 40_000, step="one")
-    second = cytopy.filter_events(first, np.arange(first.n_obs) < 10_000, step="two")
-    log = cytopy.filter_log(second)
-    assert list(log["step"]) == ["one", "two"]
-    assert list(log["n_before"]) == [60_000, 40_000]
-    assert list(log["n_after"]) == [40_000, 10_000]
-
-
-def test_record_filter_counts_without_removing(demo):
-    entry = cytopy.record_filter(demo, "marked", np.ones(demo.n_obs, dtype=bool), reason="none")
-    assert entry["n_removed"] == 0 and demo.n_obs == 60_000
-    with pytest.raises(ValueError, match="expected 60000"):
-        cytopy.record_filter(demo, "bad", np.ones(5, dtype=bool))
-
-
-def test_an_empty_log_is_an_empty_table(demo):
-    assert cytopy.filter_log(demo).empty
-    assert "step" in cytopy.filter_log(demo).columns
-
-
-# --------------------------------------------------------------------------
-# the report
-# --------------------------------------------------------------------------
-def test_report_is_one_self_contained_file(demo, tmp_path):
-    _draw_gate(demo)
-    clean = cytopy.filter_events(demo, np.arange(demo.n_obs) < 50_000, step="debris")
-
-    path = cytopy.report(clean, tmp_path / "qc.html", title="Run 1")
-    assert path.exists() and list(tmp_path.iterdir()) == [path]
-    text = path.read_text()
-    assert text.startswith("<!doctype html>")
-    assert "Run 1" in text
-    assert re.findall(r"<h2>(.*?)</h2>", text) == [
-        "Summary",
-        "What was removed",
-        "Gates",
-    ]
-    # Every figure is inlined, so there is nothing to lose alongside the file.
-    assert len(re.findall(r"data:image/png;base64,", text)) >= 2
-    assert 'src="http' not in text and "<link" not in text
-    # The filter log is in there as numbers, not just pictures.
-    assert "debris" in text and "50,000" in text
-
-
-def test_report_skips_sections_with_nothing_to_show(demo, tmp_path):
-    text = cytopy.report(demo, tmp_path / "plain.html").read_text()
-    assert re.findall(r"<h2>(.*?)</h2>", text) == ["Summary"]
-    assert "60,000 events" in text
-
-
-def test_report_sections_can_be_chosen(demo, tmp_path):
-    _draw_gate(demo)
-    text = cytopy.report(demo, tmp_path / "gates.html", sections=["gates"]).read_text()
-    assert re.findall(r"<h2>(.*?)</h2>", text) == ["Gates"]
-    with pytest.raises(ValueError, match="unknown report section"):
-        cytopy.report(demo, tmp_path / "x.html", sections=["nope"])
-
-
-def test_report_shows_gates(demo, tmp_path):
-    _draw_gate(demo)
-    text = cytopy.report(demo, tmp_path / "gates.html").read_text()
-    assert "Gates" in re.findall(r"<h2>(.*?)</h2>", text)
-    assert "lymphs" in text
-    assert "data:image/png;base64," in text
-
-
-def test_everything_survives_write_h5ad(demo, tmp_path):
-    """A whole processed run has to save and come back -- log, gates and all."""
+def test_gates_survive_write_h5ad(demo, tmp_path):
+    """A whole processed run has to save and come back -- gates and all."""
     import anndata
 
     name = _draw_gate(demo)
-    clean = cytopy.filter_events(demo, np.arange(demo.n_obs) < 50_000, step="debris")
 
     path = tmp_path / "run.h5ad"
-    clean.write_h5ad(path)
+    demo.write_h5ad(path)
     back = anndata.read_h5ad(path)
 
-    assert back.n_obs == clean.n_obs
-    pd.testing.assert_frame_equal(cytopy.filter_log(back), cytopy.filter_log(clean))
-    assert list(back.obs[name]) == list(clean.obs[name])
+    assert back.n_obs == demo.n_obs
+    assert list(back.obs[name]) == list(demo.obs[name])
     record = back.uns["cytopy"]["gates"][name]
     assert record["x"] == "CD3 (FITC-A)" and record["y"] == "CD19 (PE-A)"
     # uns lists come back as arrays, hence the list() on both sides.
     assert np.asarray(record["vertices"]).shape == (1, 4, 2)
 
-    # The restored object is enough to write the report from.
-    text = cytopy.report(back, tmp_path / "qc.html").read_text()
-    assert "debris" in text and "Gates" in text
-
-
-def test_the_log_keeps_appending_after_a_round_trip(demo, tmp_path):
-    import anndata
-
-    first = cytopy.filter_events(demo, np.arange(demo.n_obs) < 40_000, step="debris")
-    first.write_h5ad(tmp_path / "one.h5ad")
-
-    back = anndata.read_h5ad(tmp_path / "one.h5ad")
-    second = cytopy.filter_events(back, np.arange(back.n_obs) < 1000, step="later")
-    log = cytopy.filter_log(second)
-    assert list(log["step"]) == ["debris", "later"]
-    assert list(log["n_after"]) == [40_000, 1000]
+    # The restored object is enough to draw the gate from.
+    ax = cytopy.plot_gate(back, name)
+    assert any(ln.get_linestyle() == "--" for ln in ax.lines)
 
 
 # --------------------------------------------------------------------------
@@ -255,7 +154,7 @@ def _hierarchy(adata):
     values = np.asarray(adata.layers["asinh"])
 
     def gate(name, x, y, box, parent=None):
-        xi, yi = cytopy.channel_index(adata, x), cytopy.channel_index(adata, y)
+        xi, yi = cytopy.find_channel_name(adata, x), cytopy.find_channel_name(adata, y)
         mask = (
             (values[:, xi] > box[0])
             & (values[:, xi] < box[1])
@@ -303,8 +202,7 @@ def test_the_hierarchy_comes_out_parents_first(demo):
 def test_each_gate_is_drawn_on_the_plane_it_was_drawn_in(demo):
     import matplotlib.pyplot as plt
 
-    from cytopy.plotting import plot_gate
-    from cytopy.report import _draw_gate_page
+    from cytopy.plotting import _draw_gate_page, plot_gate
 
     _hierarchy(demo)
     _, axes = plt.subplots(1, 3)
@@ -324,7 +222,7 @@ def test_each_gate_is_drawn_on_the_plane_it_was_drawn_in(demo):
 
 
 def test_the_contents_page_lists_the_tree(demo):
-    from cytopy.report import _hierarchy_page
+    from cytopy.plotting import _hierarchy_page
 
     _hierarchy(demo)
     gates = demo.uns["cytopy"]["gates"]
@@ -346,39 +244,6 @@ def test_gating_pdf_needs_something_to_draw(demo, tmp_path):
     cytopy.add_gate(demo, "from a mask", np.ones(demo.n_obs, dtype=bool))
     with pytest.raises(ValueError, match="no gates with an outline"):
         cytopy.gating_pdf(demo, tmp_path / "empty.pdf")
-
-
-def test_plot_compensation_lays_out_a_control_grid(controls):
-    """A row per control, a column per detector, with the level to match marked."""
-    stained, unstained = controls
-    spill = cytopy.compute_spillover_matrix(stained, unstained=unstained, statistic="mean")
-    fig = cytopy.plot_compensation(stained, spill, unstained=unstained, max_events=5_000)
-
-    n = len(stained)
-    assert len(fig.axes) == n * n
-    off_diagonal = [ax for i, ax in enumerate(fig.axes) if i // n != i % n]
-    # every off-diagonal panel carries the negative population's level
-    for ax in off_diagonal:
-        assert any(line.get_linestyle() == "--" for line in ax.lines)
-    assert "→" in off_diagonal[0].get_title(loc="left")
-
-    with pytest.raises(ValueError, match="no controls to plot"):
-        cytopy.plot_compensation({}, spill)
-
-
-def test_over_compensation_pulls_the_population_below_the_line(controls):
-    stained, unstained = controls
-    spill = cytopy.compute_spillover_matrix(stained, unstained=unstained, statistic="mean")
-    bad = spill.copy()
-    bad.loc["CD3 (FITC-A)", "CD19 (PE-A)"] = 0.30
-
-    import cytopy as c
-
-    good = c.compensation_residuals(stained, spill, unstained=unstained, statistic="mean")
-    worse = c.compensation_residuals(stained, bad, unstained=unstained, statistic="mean")
-    assert abs(worse.loc["CD3 (FITC-A)", "CD19 (PE-A)"]) > abs(
-        good.loc["CD3 (FITC-A)", "CD19 (PE-A)"]
-    )
 
 
 # --------------------------------------------------------------------------

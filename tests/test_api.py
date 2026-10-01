@@ -15,7 +15,7 @@ import cytopy
 # Modules whose names are served lazily, because importing them pulls in napari
 # and Qt. cytopy.__init__ maps each name to its module by hand for exactly that
 # reason.
-LAZY_MODULES = {"viewer", "cofactors"}
+LAZY_MODULES = {"viewer", "cofactors", "compensation"}
 
 
 def _module_names():

@@ -93,6 +93,54 @@ def test_an_all_positive_bead_control_needs_an_unstained_tube(controls, true_spi
         cytopy.compute_spillover_matrix(beads, thresholds=dict.fromkeys(beads, -np.inf))
 
 
+def _gate_by_hand(stained):
+    """``positive`` above 1000 and ``negative`` below 200, in each control's own detector."""
+    for name, control in stained.items():
+        column = np.asarray(control.X[:, cytopy.find_channel_name(control, name)])
+        control.obs["positive"] = column > 1000.0
+        control.obs["negative"] = column < 200.0
+
+
+def test_a_negative_gate_on_the_control_is_used(controls, true_spillover):
+    stained, unstained = controls
+    _gate_by_hand(stained)
+    spill = cytopy.compute_spillover_matrix(
+        stained, unstained=unstained, positive_gate="positive", negative_gate="negative"
+    )
+    assert np.allclose(spill.to_numpy(), true_spillover, atol=0.01)
+    row = spill.attrs["cytopy"]["controls"][FLUOR[0]]
+    assert row["negative"] == "control gate"
+    assert row["negative_events"] == int(stained[FLUOR[0]].obs["negative"].sum())
+
+
+def test_the_controls_own_negative_gate_wins_over_the_unstained(controls):
+    stained, unstained = controls
+    _gate_by_hand(stained)
+    spill = cytopy.compute_spillover_matrix(
+        stained, unstained=unstained, positive_gate="positive", negative_gate="negative"
+    )
+    assert {c["negative"] for c in spill.attrs["cytopy"]["controls"].values()} == {"control gate"}
+
+
+def test_without_a_negative_gate_the_old_defaults_hold(controls):
+    stained, unstained = controls
+    _gate_by_hand(stained)
+    own = cytopy.compute_spillover_matrix(stained, positive_gate="positive", negative_gate="nope")
+    assert own.attrs["cytopy"]["controls"][FLUOR[0]]["negative"] == "complement"
+    shared = cytopy.compute_spillover_matrix(
+        stained, unstained=unstained, positive_gate="positive", negative_gate="nope"
+    )
+    assert shared.attrs["cytopy"]["controls"][FLUOR[0]]["negative"] == "unstained"
+
+
+def test_overlapping_positive_and_negative_gates_are_refused(controls):
+    stained, _ = controls
+    _gate_by_hand(stained)
+    stained[FLUOR[0]].obs["negative"] = True
+    with pytest.raises(ValueError, match="both the positive and the negative gate"):
+        cytopy.compute_spillover_matrix(stained, positive_gate="positive", negative_gate="negative")
+
+
 def test_a_detector_without_a_control_only_appears_if_asked_for(controls):
     stained, _ = controls
     partial = {k: v for k, v in stained.items() if k != FLUOR[1]}
@@ -366,3 +414,31 @@ def test_a_matrix_from_scatter_gated_controls(controls, true_spillover):
     assert np.allclose(spill.to_numpy(), true_spillover, atol=0.01)
     # and the controls really were cut down
     assert all(comp_adatas[ch].n_obs < stained[ch].n_obs for ch in stained)
+
+
+def test_chosen_controls_take_the_unstained_as_their_negative(controls, true_spillover):
+    stained, unstained = controls
+    _gate_by_hand(stained)
+    spill = cytopy.compute_spillover_matrix(
+        stained,
+        unstained=unstained,
+        positive_gate="positive",
+        negative_gate="negative",
+        use_unstained=["CD3"],  # a marker resolves like any key
+    )
+    assert np.allclose(spill.to_numpy(), true_spillover, atol=0.01)
+    rows = spill.attrs["cytopy"]["controls"]
+    # Chosen wins over the control's own gate; the others keep theirs.
+    assert rows[FLUOR[0]]["negative"] == "unstained (chosen)"
+    assert rows[FLUOR[0]]["negative_events"] == unstained.n_obs
+    assert rows[FLUOR[1]]["negative"] == "control gate"
+
+    with pytest.raises(ValueError, match="needs the unstained"):
+        cytopy.compute_spillover_matrix(stained, positive_gate="positive", use_unstained=["CD3"])
+    with pytest.raises(ValueError, match="no control"):
+        cytopy.compute_spillover_matrix(
+            {k: stained[k] for k in FLUOR[:2]},
+            unstained=unstained,
+            positive_gate="positive",
+            use_unstained=[FLUOR[2]],
+        )

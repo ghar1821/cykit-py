@@ -64,38 +64,19 @@ control happened to be, and the diagonal is `1` by construction. Inverting the
 assembled matrix is the N-parameter generalisation that lets every detector be
 corrected at once.
 
-The positive population is found by splitting the control's stained detector on
-an arcsinh scale (Otsu), or you can gate it yourself:
+Gating the controls is two windows, one after the other.
+
+**1. Clean up the controls** in [`cytopy.open_napari`](#gating), the same window
+you use on a sample. It takes the whole dict at once, pooled into one object
+with a `sample` column:
 
 ```python
 everything = {**controls, "unstained": unstained}
-
-pooled = cytopy.open_napari(everything, "asinh")   # ONE window, every control in it
+pooled = cytopy.open_napari(everything, "asinh")   # draw cells, then singlets, on all samples
 
 gated = cytopy.subset_controls(cytopy.split_samples(pooled), "singlets")
 unstained = gated.pop("unstained")
-spill = cytopy.compute_spillover_matrix(gated, unstained=unstained, positive_gate="positive")
 ```
-
-There is no special function for controls — [`cytopy.open_napari`](#gating) is
-the same one you use on a sample, and it takes the whole dict at once. The
-controls are pooled into one object with a `sample` column, and the **samples**
-list picks
-which you are looking at. That matters because the gates are not all the same
-kind:
-
-| gate | samples selected |
-| --- | --- |
-| `cells` — `FSC-A` × `SSC-A` | **all**: scatter is scatter |
-| `singlets` — `FSC-A` × `FSC-H`, parent `cells` | **all** |
-| `positive` — the stained channel, parent `singlets` | **one at a time**: each tube stains a different channel |
-
-**A gate only changes the samples you are looking at**, so drawing `positive` on
-one tube and then the next under the same name keeps both. `split_samples`
-takes them apart again afterwards.
-
-**Gates already on the data are loaded** — outlined where you drew them, listed
-under *edit gate*, available as parents. Gating is something you come back to.
 
 The scatter pass matters more than it looks: every number in the matrix is a
 median, and a median over cells *and* debris is a median of nothing in
@@ -103,33 +84,132 @@ particular. On a real six-colour panel, gating the controls down to cells took
 the worst coefficient from 10.1% off to 4.7% off — before a single positive
 gate was drawn.
 
-Each control is its own AnnData, so the gate lives in *that* control's
-`obs["positive"]` and the same name works for all of them. A control with no
-gate falls back to the automatic split, so you can hand-gate only the awkward
-ones. `thresholds=` takes a raw cutoff per control instead.
+**2. Gate the positives and negatives, and compute the matrix**, in the
+compensation window:
+
+```python
+spill = cytopy.open_napari_compensation(gated, unstained, "asinh")
+cytopy.compensate(adata, spill, inplace=True)
+```
+
+It has two steps, switched with the **step** box.
+
+*gate controls* shows one control at a time as a distribution of its own
+detector, with the **unstained overlaid in another colour** so you can see where
+unstained events sit; untick **show unstained** to see the control on its own
+(the axis stays put). Pick **positive** or **negative** under **draw**, drag a
+box over that population and hit *apply gate from shapes*; only the extent along
+the x axis counts. Positive gates are shaded green and negative ones red. A
+line marks each gate's median. To
+change one, pick it under **draw** and hit *adjust gate*: it comes back on the
+canvas as a box you can drag or resize, and applying again replaces it. *delete
+gate* removes it. Once the matrix has been computed, a gate changed afterwards
+is flagged in the header, because the table no longer follows from the gates
+until you compute again. Both gates are gates **on the control**. The unstained is
+never gated: a box that also covers its curve gates only the control.
+
+By default the negative population is the control's own negative gate — same
+cells, same autofluorescence. Tick **use unstained as negative** to take it from
+the whole unstained tube instead, which is what a control without usable
+negatives of its own (beads that are all positive) needs. There is nothing to draw
+then: the whole tube is the negative, and a red line marks its median. It is per control and
+recorded on it (`uns["cytopy"]["use_unstained"]`), so it is still set when you
+reopen the window. A negative gate the control already has is kept but not
+used, and unticking puts it back. The **control** list marks
+each one `●` once it has both gates, and `n`/`p` step through them. Gates
+already on the controls are loaded and shown as bands.
+
+*compute spillover matrix* refuses until every control has both gates — nothing
+is split automatically here — then fills in the table and moves to the second
+step.
+
+*check compensation* has two views, picked with the **view** box.
+
+**grid** is the **N × N grid** of biaxial plots: one row and one column per
+single-stain control. Tile (*i*, *j*) plots control *i*'s own detector on x
+against detector *j* on y, so it shows the coefficient `S[i, j]`. Beside it is a
+second N × N grid with the same rows and columns, but with detector *j* on x and
+a scatter channel on y. Choose the scatter channel with **scatter y**: `SSC-A` by
+default, or `<none>` to hide the second grid. The same coefficient moves the
+positive population up in the first grid and sideways in the second. Scatter axes are fitted to the 0.1–99.9th percentile of the
+events rather than the detector's `$PnR`, which would squash every population
+into a strip.
+
+**two plots** is two large biaxial plots with full axes. The controls are split
+into two columns, the left one for the left plot and the right one for the
+right. Each plot picks its own control, x and y, scatter included, and has:
+
+* **x range** and **y range** — min and max boxes, in the units the axis is
+  ticked in (raw units on an arcsinh or logicle axis). They show the current
+  range, so they are a readout as well; type a value and press Enter to fix that
+  end, or clear the box to put it back on automatic. Changing the plot's control
+  or channel clears its ranges, and *fit axes* clears them all.
+* **bins** — how finely that plot's density is binned, from 16 to 1024. Both
+  plots are drawn at the size of the finer one, so the coarser one's bins show
+  as bigger squares and the two stay side by side at the same size.
+
+Both views show the controls **compensated with the matrix in the table**,
+through the transform `layer` recorded, so they read on the same axes as the
+gating step, and both redraw whenever a cell is edited (about 0.3 s for the grid
+of a 20-colour panel).
+
+A row compensated correctly has its positive population level with its
+negative one in every tile but the diagonal. A population tipping up is
+under-compensated, one sliding down is over. The green (positive) and red (negative) lines across
+each tile are the positive and negative medians. Click a tile in either grid,
+or a cell of the table, to pick it out: it is outlined in both grids, the table selects that cell, and the
+status line gives the coefficient and the positive-minus-negative gap in raw
+units, which should be close to 0. The axes stay fixed while you tune, so it is the
+population that moves; *fit axes* refits them. Each tile is scaled to its own
+peak, so a dim control is as readable as a bright one. `tile_bins=` sets the
+resolution of each tile (64 by default). Each cell has its own − and + to move it by one step, 0.001
+by default (the **− / + step** box under the table changes it), or type a value
+into it and press Enter.
+Edited cells are highlighted; *reset*
+puts back the matrix you started from (or last computed); *copy as Python*
+puts a `pd.DataFrame(...)` literal on the clipboard for your notebook.
+
+**A matrix the files already carry is loaded.** When the controls have a
+`$SPILLOVER`, the table starts from it and the window **opens on the check
+step**, so you can tune the instrument's matrix without gating anything.
+The matrix always covers **exactly the detectors you have controls for**, square
+over those and nothing else. A file's `$SPILLOVER` usually covers the whole
+panel, but a detector nobody stained has no dye in it, so it is dropped rather
+than inverted: kept, its row would be treated as a dye that is not there and
+push error into the real channels. `compensate` then leaves that channel as it
+is. This is the `spillover=` argument, `"file"` by default. Controls carrying different
+matrices, or a diagonal that is not `1`, are an error rather than a guess. Pass
+a DataFrame to start from one you have, or `None` for the identity.
+
+The window writes nothing but the gates: `obs["positive"]` and
+`obs["negative"]` on each control, recorded like any other gate. So the matrix
+can be recomputed without the window:
+
+```python
+spill = cytopy.compute_spillover_matrix(
+    gated, positive_gate="positive", negative_gate="negative",
+    unstained=unstained, use_unstained=["CD8 (APC-A)"],   # only if you ticked any
+)
+```
+
+Without the window, `compute_spillover_matrix` falls back for any control
+missing a gate: no `positive_gate` means an automatic split of the stained
+detector on an arcsinh scale (Otsu), and no `negative_gate` means the events
+outside the positive gate, or `unstained=` as a universal negative.
+`thresholds=` takes a raw cutoff per control instead.
 
 The gating is done on an arcsinh display — on a linear axis the whole negative
 population lands in one bin — but **the matrix is computed on the raw values**,
 because spillover is linear and `asinh(a) − asinh(b)` is not proportional to
 `a − b`. Transforming the controls first inflates the coefficients
-several-fold. The negative reference is the control's own negative events by
-default — same beads, same autofluorescence — or pass
-`unstained=` to use a universal negative instead. A control that does not split
-into two populations is an error rather than a quietly wrong row.
+several-fold. A control that is not brighter than its negatives in its own
+detector is an error rather than a quietly wrong row.
 
-**Adjusting one by hand.** The matrix is a DataFrame, so a coefficient is an
-assignment:
+**Adjusting one by hand** outside the window: the matrix is a DataFrame, so a
+coefficient is an assignment.
 
 ```python
 spill.loc["CD3 (FITC-A)", "CD19 (PE-A)"] = 0.13
-```
-
-To see whether it helped, compensate a control with the new matrix and look at
-it: a single-stain control compensated correctly has its positive population
-level with its negative one in every detector but its own. A population tipping
-up is under-compensated, one sliding down is over.
-
-```python
 control = cytopy.compensate(controls["CD3 (FITC-A)"], spill)
 cytopy.plot_biaxial(control, "CD3 (FITC-A)", "CD19 (PE-A)", layer="comp", cofactor=150)
 ```
@@ -515,7 +595,7 @@ use, so `import cytopy` in a script that never opens a window never loads Qt.
 | | |
 | --- | --- |
 | `compensate(adata, spillover)` | apply a matrix, writing `layers["comp"]` |
-| `compute_spillover_matrix(controls)` | derive one from single-stain controls |
+| `compute_spillover_matrix(controls)` | derive one from single-stain controls, by `positive_gate=`/`negative_gate=` or automatically |
 | `subset_controls(controls, gate)` | keep only the gated events, in every control |
 | `write_spillover(spill, path)` | a matrix out as CSV; read one back with `pd.read_csv(path, index_col=0)` |
 
@@ -535,9 +615,10 @@ use, so `import cytopy` in a script that never opens a window never loads Qt.
 | --- | --- |
 | `open_napari(adata, layer)` | the plotting and gating window; hands the data back |
 | `open_napari_transform(adata, layer, cofactor_range=)` | the cofactor window; hands back a `Cofactors` |
+| `open_napari_compensation(controls, unstained, layer)` | the compensation window; hands back the spillover matrix, edited live |
 | `Cofactors` | a dict of channel to cofactor, plus `.layer`, `.untouched()`, `.n_adjusted` and `.to_source()` |
-| `current_viewer()`, `current_transform_window()` | the object behind whichever window was opened last |
-| `CytoViewer`, `CofactorWindow` | the classes, which take a `viewer=` if you want the plot inside a napari window you already have |
+| `current_viewer()`, `current_transform_window()`, `current_compensation_window()` | the object behind whichever window was opened last |
+| `CytoViewer`, `CofactorWindow`, `CompensationWindow` | the classes, which take a `viewer=` if you want the plot inside a napari window you already have |
 | `Panel` | one plot inside a `CytoViewer`: the napari layers it draws into, and what it is showing |
 | `as_one_anndata(data)` | what both windows do to their first argument |
 | `faded_colormap(name)` | a colormap whose bottom end is transparent rather than dark |

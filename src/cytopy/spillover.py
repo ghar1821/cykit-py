@@ -18,7 +18,7 @@ that lands in detector *j*. :func:`~cytopy.compensate` takes it from there.
 from __future__ import annotations
 
 import os
-from collections.abc import Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from pathlib import Path
 
 import anndata as ad
@@ -127,6 +127,30 @@ def _stat(values: np.ndarray, statistic: str) -> np.ndarray:
     raise ValueError(f"statistic must be 'median' or 'mean', not {statistic!r}")
 
 
+def _resolve_detectors(
+    loaded: Mapping[str, ad.AnnData], channels: Sequence[str] | None
+) -> tuple[dict[str, str], list[str]]:
+    """Each control's key as a ``var_name``, and the detectors the matrix covers.
+
+    Every key is resolved against the first control's panel, so that ``"CD3"``,
+    ``"FITC-A"`` and ``"CD3 (FITC-A)"`` all name the same row.
+    """
+    reference = next(iter(loaded.values()))
+    primary = {key: str(reference.var_names[find_channel_name(reference, key)]) for key in loaded}
+    if len(set(primary.values())) != len(primary):
+        raise ValueError(f"two controls resolve to the same detector: {sorted(primary.values())}")
+
+    if channels is None:
+        names = [n for n in get_fluor_channels(reference) if n in set(primary.values())]
+        names += [n for n in primary.values() if n not in names]
+    else:
+        names = [str(reference.var_names[find_channel_name(reference, c)]) for c in channels]
+        missing = sorted(set(primary.values()) - set(names))
+        if missing:
+            raise ValueError(f"channels omits detectors that have controls: {missing}")
+    return primary, names
+
+
 def compute_spillover_matrix(
     controls: Mapping[str, ad.AnnData | str | os.PathLike],
     *,
@@ -135,6 +159,8 @@ def compute_spillover_matrix(
     layer: str = "raw",
     statistic: str = "median",
     positive_gate: str | None = None,
+    negative_gate: str | None = None,
+    use_unstained: Collection[str] | None = None,
     thresholds: Mapping[str, float] | None = None,
     cofactor: float = 150.0,
     min_events: int = 20,
@@ -180,6 +206,19 @@ def compute_spillover_matrix(
         Name of a boolean ``obs`` column marking the stained events, as
         written by :func:`~cytopy.add_gate`. Falls back to the automatic split
         for any control that lacks the column.
+    negative_gate
+        Name of a boolean ``obs`` column marking the control's negative
+        events, as drawn in :func:`~cytopy.open_napari_compensation`. A
+        control that has it uses those events as its negative reference, even
+        when ``unstained`` is given; one without it falls back to the whole
+        ``unstained``, or else to every event outside the positive population.
+        A negative gate that overlaps the positive population is an error.
+    use_unstained
+        Controls whose negative reference is the whole ``unstained`` tube,
+        keyed like ``controls`` (markers and detectors work too). Takes
+        precedence over their ``negative_gate``, which is how a control with
+        no usable negatives of its own -- beads that are all positive -- is
+        handled. Requires ``unstained``.
     thresholds
         Per-control cutoff on the stained detector, in raw units, keyed like
         ``controls``. Overrides the automatic split. Pass ``-inf`` for a tube
@@ -211,14 +250,17 @@ def compute_spillover_matrix(
     DataFrame
         Square spillover matrix indexed and columned by the resolved detector
         names, with ``1`` on the diagonal. ``.attrs['cytopy']`` carries the
-        per-control event counts and thresholds for troubleshooting.
+        per-control event counts, thresholds and where each negative came
+        from (``"control gate"``, ``"unstained"`` or ``"complement"``) for
+        troubleshooting.
 
     Raises
     ------
     ValueError
         If ``controls`` is empty, a control does not separate into two
         populations, a control's own detector shows no signal above its
-        negatives, or ``channels`` omits a detector that has a control.
+        negatives, its positive and negative gates overlap, or ``channels``
+        omits a detector that has a control.
     KeyError
         If a control is missing one of the detectors being solved for.
     """
@@ -226,22 +268,16 @@ def compute_spillover_matrix(
         raise ValueError("no controls given")
     _stat(np.zeros((1, 1)), statistic)  # fail on a bad statistic before reading files
     loaded = {key: _as_anndata(value) for key, value in controls.items()}
-    reference = next(iter(loaded.values()))
-
-    # Resolve every control key to the reference panel's own channel name, so
-    # that "CD3", "FITC-A" and "CD3 (FITC-A)" all name the same row.
-    primary = {key: str(reference.var_names[find_channel_name(reference, key)]) for key in loaded}
-    if len(set(primary.values())) != len(primary):
-        raise ValueError(f"two controls resolve to the same detector: {sorted(primary.values())}")
-
-    if channels is None:
-        names = [n for n in get_fluor_channels(reference) if n in set(primary.values())]
-        names += [n for n in primary.values() if n not in names]
-    else:
-        names = [str(reference.var_names[find_channel_name(reference, c)]) for c in channels]
-        missing = sorted(set(primary.values()) - set(names))
-        if missing:
-            raise ValueError(f"channels omits detectors that have controls: {missing}")
+    primary, names = _resolve_detectors(loaded, channels)
+    chosen: set[str] = set()
+    if use_unstained:
+        if unstained is None:
+            raise ValueError("use_unstained needs the unstained tube: pass unstained=")
+        reference = next(iter(loaded.values()))
+        chosen = {str(reference.var_names[find_channel_name(reference, k)]) for k in use_unstained}
+        unknown = sorted(chosen - set(primary.values()))
+        if unknown:
+            raise ValueError(f"use_unstained names detectors with no control: {unknown}")
 
     background = None
     if unstained is not None:
@@ -274,12 +310,25 @@ def compute_spillover_matrix(
             automatic = True
 
         negative = ~positive
+        baseline = background
+        source = "unstained" if background is not None else "complement"
+        if detector in chosen:
+            source = "unstained (chosen)"
+        elif negative_gate is not None and negative_gate in control.obs:
+            negative = np.asarray(control.obs[negative_gate], dtype=bool)
+            if (negative & positive).any():
+                raise ValueError(
+                    f"control {key!r}: {int((negative & positive).sum())} events are in both "
+                    f"the positive and the negative gate ({negative_gate!r})"
+                )
+            baseline, source = None, "control gate"
+
         if positive.sum() < min_events:
             raise ValueError(
                 f"control {key!r} has {int(positive.sum())} positive events in {detector} "
                 f"(need {min_events}); it may be too dim to split automatically"
             )
-        if background is None and negative.sum() < min_events:
+        if baseline is None and negative.sum() < min_events:
             raise ValueError(
                 f"control {key!r} has {int(negative.sum())} negative events in {detector} "
                 f"(need {min_events}); pass an unstained control to use as the negative"
@@ -293,7 +342,11 @@ def compute_spillover_matrix(
                 "to split automatically — pass positive_gate or thresholds"
             )
 
-        baseline = background if background is not None else _stat(matrix[negative], statistic)
+        if baseline is None:
+            baseline = _stat(matrix[negative], statistic)
+            n_negative = int(negative.sum())
+        else:
+            n_negative = int(unstained.n_obs)
         difference = _stat(matrix[positive], statistic) - baseline
         if not difference[row] > 0:
             raise ValueError(
@@ -303,9 +356,10 @@ def compute_spillover_matrix(
         spill[row] = difference / difference[row]
         diagnostics[detector] = {
             "positive_events": int(positive.sum()),
-            "negative_events": int(negative.sum()),
+            "negative_events": n_negative,
             "threshold": threshold,
             "separation": gap,
+            "negative": source,
         }
 
     out = pd.DataFrame(spill, index=pd.Index(names), columns=pd.Index(names))

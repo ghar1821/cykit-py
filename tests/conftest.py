@@ -85,9 +85,13 @@ def _close_open_napari_window():
         from cytopy import viewer
     except ImportError:  # pragma: no cover - napari not installed
         return
-    from cytopy import cofactors
+    from cytopy import cofactors, compensation
 
-    for module, attr in ((viewer, "_CURRENT"), (cofactors, "_CURRENT_TRANSFORM")):
+    for module, attr in (
+        (viewer, "_CURRENT"),
+        (cofactors, "_CURRENT_TRANSFORM"),
+        (compensation, "_CURRENT_COMPENSATION"),
+    ):
         current = getattr(module, attr, None)
         if current is not None:
             setattr(module, attr, None)

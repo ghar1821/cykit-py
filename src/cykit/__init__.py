@@ -1,4 +1,4 @@
-"""cytopy: cytometry analysis on AnnData, gated interactively in napari."""
+"""cykit: cytometry analysis on AnnData, gated interactively in napari."""
 
 from __future__ import annotations
 

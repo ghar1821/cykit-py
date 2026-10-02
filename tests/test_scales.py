@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from cytopy.scales import (
+from cykit.scales import (
     AsinhScale,
     LinearScale,
     LogicleScale,

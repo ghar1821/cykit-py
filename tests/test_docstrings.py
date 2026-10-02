@@ -11,9 +11,9 @@ import re
 
 import pytest
 
-SRC = pathlib.Path(__file__).resolve().parents[1] / "src" / "cytopy"
+SRC = pathlib.Path(__file__).resolve().parents[1] / "src" / "cykit"
 
-# Methods whose parameters are documented once, on cytopy.scales.Scale.
+# Methods whose parameters are documented once, on cykit.scales.Scale.
 INHERITED = {"forward", "inverse", "ticks", "limits", "to_raw", "from_raw", "__call__"}
 
 

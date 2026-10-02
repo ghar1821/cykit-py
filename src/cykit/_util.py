@@ -1,6 +1,6 @@
 """Small internals shared across modules, with nothing of its own to say.
 
-Kept free of cytopy imports so any module can use it without a cycle.
+Kept free of cykit imports so any module can use it without a cycle.
 """
 
 from __future__ import annotations
@@ -10,7 +10,7 @@ import numpy as np
 
 #: How "use ``adata.X``" is spelled. ``X`` is therefore a reserved layer name:
 #: ``adata.layers["X"]`` is unreachable through here, which costs nothing since
-#: cytopy never creates a layer called that.
+#: cykit never creates a layer called that.
 LAYER_X = "X"
 
 

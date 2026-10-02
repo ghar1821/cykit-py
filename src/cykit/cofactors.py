@@ -1,10 +1,10 @@
 """Choosing arcsinh cofactors by eye, in a napari window.
 
-Unlike :mod:`cytopy.viewer`, this module *does* transform -- but only for
+Unlike :mod:`cykit.viewer`, this module *does* transform -- but only for
 display, in memory, and never back onto the AnnData. It is the interactive
 counterpart of ``plot_biaxial(..., cofactor=...)``: you are handed numbers
 rather than a layer, and applying them is your own explicit
-:func:`~cytopy.asinh_transform` call.
+:func:`~cykit.asinh_transform` call.
 
 Three panels share the canvas: the two channels against each other, and a
 distribution of each with its own slider. The sliders are log-spaced across a
@@ -93,7 +93,7 @@ class Cofactors(dict):
     """Cofactors chosen in a window, and the record of which ones you moved.
 
     A plain ``dict`` of var_name to cofactor, so it goes straight into
-    :func:`~cytopy.asinh_transform`. Its ``repr`` is a Python dict literal, one
+    :func:`~cykit.asinh_transform`. Its ``repr`` is a Python dict literal, one
     channel per line, so the cell output is the thing you paste into a notebook
     -- which is where a decision like this belongs, rather than in the memory of
     a kernel you will restart.
@@ -194,7 +194,7 @@ class _ChannelData:
             Width of the linear region.
         margin
             Proportion of the span to add beyond each end, as
-            :func:`~cytopy.scales.pad_range` takes it.
+            :func:`~cykit.scales.pad_range` takes it.
 
         Returns
         -------
@@ -348,7 +348,7 @@ class CofactorWindow:
     Three panels: the two channels against each other, and a distribution of
     each with its own log-spaced slider. Everything is transformed for display
     only -- nothing is written to ``adata``, and applying the answer is your own
-    :func:`~cytopy.asinh_transform` call.
+    :func:`~cykit.asinh_transform` call.
 
     Every channel holds a cofactor from the moment the window opens, so moving
     between channels cannot lose a decision. Channels you have moved are marked
@@ -361,10 +361,10 @@ class CofactorWindow:
     ----------
     adata
         What to read. One events x channels AnnData, a path, or several of
-        either, exactly as :func:`~cytopy.open_napari` accepts. Never modified.
+        either, exactly as :func:`~cykit.open_napari` accepts. Never modified.
     layer
         Matrix to read the **untransformed** values from, by name. Note the
-        asymmetry with :func:`~cytopy.open_napari`, which is pointed at a layer
+        asymmetry with :func:`~cykit.open_napari`, which is pointed at a layer
         that has already been transformed: this window does the arcsinh itself,
         so it needs the values the transform would be applied to. Usually
         ``"comp"``, since cofactors are best chosen on compensated data.
@@ -378,16 +378,16 @@ class CofactorWindow:
         flow, so it is your prior on where the answer lives. The slider is
         log-spaced across it, so narrowing it is how you get finer control.
     channels
-        Channels to tune. Defaults to :func:`~cytopy.get_fluor_channels`.
+        Channels to tune. Defaults to :func:`~cykit.get_fluor_channels`.
     cofactor
         Seed for the sliders: one value for every channel, or a mapping read the
-        way :func:`~cytopy.asinh_transform` reads one, including its
+        way :func:`~cykit.asinh_transform` reads one, including its
         ``"default"`` key. ``None`` seeds the geometric midpoint of
         ``cofactor_range``. A seed outside the range is refused rather than
         clamped.
     ticks
         How the tuned axes are labelled, one of
-        :data:`~cytopy.viewer.TICK_CHOICES`, and changeable in the window
+        :data:`~cykit.viewer.TICK_CHOICES`, and changeable in the window
         afterwards. ``"untransformed"``, the default, puts the ticks at round
         numbers of the raw units the slider is measured in, so the knee line
         and the cofactor read against the same scale. ``"transformed"`` labels
@@ -395,7 +395,7 @@ class CofactorWindow:
         moves nothing.
     margin
         How far past the data the axes run, as a proportion of the span added
-        at each end; :data:`~cytopy.scales.AXIS_MARGIN` by default, and
+        at each end; :data:`~cykit.scales.AXIS_MARGIN` by default, and
         adjustable in the window with the **axis margin %** slider. The span is
         in display coordinates -- decades, on an arcsinh axis -- so a tenth of
         it moves the raw value at the end of the axis by a good deal more than
@@ -438,7 +438,7 @@ class CofactorWindow:
         colormap: str = "turbo",
         background: str | None = None,
         viewer=None,
-        title: str = "cytopy cofactors",
+        title: str = "cykit cofactors",
     ):
         """Build the panels and the control panel, then draw. See the class docstring."""
         import napari
@@ -765,7 +765,7 @@ class CofactorWindow:
         Parameters
         ----------
         x
-            Channel to tune, by any alias :func:`~cytopy.find_channel_name` accepts.
+            Channel to tune, by any alias :func:`~cykit.find_channel_name` accepts.
         y
             Channel to plot it against.
         """
@@ -949,7 +949,7 @@ class CofactorWindow:
         The panel always plots ``asinh(raw / cofactor)``, so ``"transformed"``
         is the plain identity -- the stored numbers are already the display
         coordinates. ``"untransformed"`` hands the same coordinates to
-        :class:`~cytopy.scales.PretransformedScale`, which works out where the
+        :class:`~cykit.scales.PretransformedScale`, which works out where the
         decades of the original units land and labels those instead.
         """
         from .scales import LinearScale
@@ -1221,7 +1221,7 @@ def _fill_colormap(colour: str):
     from napari.utils.colormaps import Colormap
 
     rgb = [int(colour[i : i + 2], 16) / 255 for i in (1, 3, 5)]
-    return Colormap(colors=[[*rgb, 0.0], [*rgb, 0.28]], name="cytopy_fill")
+    return Colormap(colors=[[*rgb, 0.0], [*rgb, 0.28]], name="cykit_fill")
 
 
 def _as_one(adata):
@@ -1255,11 +1255,11 @@ def open_napari_transform(
     Opens a window showing what a cofactor *does*: the two channels against each
     other, and a distribution of each with its own log-spaced slider. Nothing is
     written to ``adata`` -- applying the answer is still your own
-    :func:`~cytopy.asinh_transform` call, which is what keeps a transform
+    :func:`~cykit.asinh_transform` call, which is what keeps a transform
     something you ran rather than something that happened.
 
     ``layer`` is the **untransformed** matrix, unlike
-    :func:`~cytopy.open_napari`, which is pointed at a layer already transformed.
+    :func:`~cykit.open_napari`, which is pointed at a layer already transformed.
 
     Parameters
     ----------
@@ -1281,21 +1281,21 @@ def open_napari_transform(
         range that suits both mass cytometry and spectral flow. The slider is
         log-spaced across it, so narrowing it is how you get finer control.
     channels
-        Channels to tune. Defaults to :func:`~cytopy.get_fluor_channels`.
+        Channels to tune. Defaults to :func:`~cykit.get_fluor_channels`.
     cofactor
         Seed for the sliders: one value for every channel, or a mapping read the
-        way :func:`~cytopy.asinh_transform` reads one. ``None`` seeds the
+        way :func:`~cykit.asinh_transform` reads one. ``None`` seeds the
         geometric midpoint of ``cofactor_range``, which makes no claim about the
         data. A seed outside the range is refused rather than clamped.
     ticks
         How the tuned axes are labelled to begin with, one of
-        :data:`~cytopy.viewer.TICK_CHOICES`. ``"untransformed"``, the default,
+        :data:`~cykit.viewer.TICK_CHOICES`. ``"untransformed"``, the default,
         labels them in the raw units the cofactor itself is measured in;
         ``"transformed"`` labels the arcsinh values being plotted. The **axis
         ticks** box changes it in the window.
     margin
         How far past the data the axes run, as a proportion of the span added
-        at each end; :data:`~cytopy.scales.AXIS_MARGIN` by default, and
+        at each end; :data:`~cykit.scales.AXIS_MARGIN` by default, and
         adjustable in the window with the **axis margin %** slider. The span is
         in display coordinates -- decades, on an arcsinh axis -- so a tenth of
         it moves the raw value at the end of the axis by a good deal more than
@@ -1329,7 +1329,7 @@ def open_napari_transform(
     -------
     Cofactors
         var_name to cofactor, ready to pass to
-        :func:`~cytopy.asinh_transform`. Its ``repr`` is a dict literal you can
+        :func:`~cykit.asinh_transform`. Its ``repr`` is a dict literal you can
         paste into a notebook, which is also what the window's **copy as a
         Python dict** button puts on the clipboard.
     """

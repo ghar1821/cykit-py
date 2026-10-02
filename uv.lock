@@ -780,7 +780,7 @@ wheels = [
 ]
 
 [[package]]
-name = "cytopy"
+name = "cykit-py"
 version = "0.0.1a0"
 source = { editable = "." }
 dependencies = [

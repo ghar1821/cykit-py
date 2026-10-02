@@ -1,4 +1,4 @@
-"""Write a synthetic 6-channel FCS file to try cytopy on.
+"""Write a synthetic 6-channel FCS file to try cykit on.
 
 Three populations with realistic-looking flow data: log-normal fluorescence
 with a noise floor that pushes a chunk of the negatives below zero, which is
@@ -115,10 +115,10 @@ def write_controls(directory, n=20_000, seed=7):
     rng = np.random.default_rng(seed)
 
     paths = [directory / "Unstained.fcs"]
-    _write(paths[0], make_control(rng, n), {"$CYT": "cytopy demo", "$SRC": "Unstained"})
+    _write(paths[0], make_control(rng, n), {"$CYT": "cykit demo", "$SRC": "Unstained"})
     for k, j in enumerate(FLUOR):
         path = directory / f"Compensation Controls_{CHANNELS[j]}.fcs"
-        _write(path, make_control(rng, n, stained=k), {"$CYT": "cytopy demo", "$SRC": CHANNELS[j]})
+        _write(path, make_control(rng, n, stained=k), {"$CYT": "cykit demo", "$SRC": CHANNELS[j]})
         paths.append(path)
     return paths
 
@@ -143,7 +143,7 @@ def main(path="demo.fcs", n=60_000, controls=None):
     spill_kw = names + "," + ",".join(f"{v:g}" for v in spill.ravel())
     meta = {
         "$SPILLOVER": spill_kw,
-        "$CYT": "cytopy demo",
+        "$CYT": "cykit demo",
         "$TIMESTEP": "0.01",
         "$SRC": Path(path).stem,
     }

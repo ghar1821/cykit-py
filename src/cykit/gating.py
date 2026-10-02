@@ -187,14 +187,14 @@ class GateRecord:
 def gate_record(adata: ad.AnnData, name: str) -> GateRecord:
     """The recorded gate ``name``, decoded.
 
-    Every reader of ``uns['cytopy']['gates']`` goes through here, so the
+    Every reader of ``uns['cykit']['gates']`` goes through here, so the
     sentinel for ``adata.X``, the default shape kind and the h5ad round trip
     are handled once rather than at each call site.
 
     Parameters
     ----------
     adata
-        AnnData carrying the gate in ``uns['cytopy']['gates']``.
+        AnnData carrying the gate in ``uns['cykit']['gates']``.
     name
         The gate to look up.
 
@@ -208,7 +208,7 @@ def gate_record(adata: ad.AnnData, name: str) -> GateRecord:
     KeyError
         If the gate was never recorded. The message lists the ones that are.
     """
-    gates = adata.uns.get("cytopy", {}).get("gates", {})
+    gates = adata.uns.get("cykit", {}).get("gates", {})
     if name not in gates:
         raise KeyError(f"no gate {name!r}; recorded gates are {sorted(gates)}")
     raw = dict(gates[name])
@@ -251,7 +251,7 @@ def gate_order(adata: ad.AnnData) -> list[str]:
     list of str
         Gate names, parents first.
     """
-    gates = adata.uns.get("cytopy", {}).get("gates", {})
+    gates = adata.uns.get("cykit", {}).get("gates", {})
     parents = {g: str(record.get("parent") or "") for g, record in gates.items()}
 
     order: list[str] = []
@@ -301,7 +301,7 @@ def add_gate(
         column.
     meta
         Extra provenance (plotted channels, layer, ...) merged into the gate's
-        record in ``adata.uns['cytopy']['gates'][name]``.
+        record in ``adata.uns['cykit']['gates'][name]``.
 
     Returns
     -------
@@ -333,7 +333,7 @@ def add_gate(
         )
         mask = np.where(scope, mask, previous)
     adata.obs[name] = pd.Series(mask, index=adata.obs_names)
-    gates = adata.uns.setdefault("cytopy", {}).setdefault("gates", {})
+    gates = adata.uns.setdefault("cykit", {}).setdefault("gates", {})
     record = gates.get(name, {}) if within is not None else {}
     gates[name] = {**record, "parent": parent or "", "n": int(mask.sum()), **(meta or {})}
     return mask
@@ -377,7 +377,7 @@ def gate_mask(adata: ad.AnnData, name: str) -> np.ndarray:
     Parameters
     ----------
     adata
-        AnnData carrying the gate in ``uns['cytopy']['gates']``.
+        AnnData carrying the gate in ``uns['cykit']['gates']``.
     name
         The gate to recompute.
 
@@ -431,7 +431,7 @@ def gate_children(adata: ad.AnnData, name: str) -> list[str]:
     list of str
         Child gate names, in the order they were recorded.
     """
-    gates = adata.uns.get("cytopy", {}).get("gates", {})
+    gates = adata.uns.get("cykit", {}).get("gates", {})
     return [g for g, record in gates.items() if str(record.get("parent") or "") == name]
 
 
@@ -462,7 +462,7 @@ def recompute_gates(adata: ad.AnnData, name: str) -> list[str]:
         except KeyError:
             continue
         adata.obs[child] = pd.Series(mask, index=adata.obs_names)
-        adata.uns["cytopy"]["gates"][child]["n"] = int(mask.sum())
+        adata.uns["cykit"]["gates"][child]["n"] = int(mask.sum())
         updated.append(child)
         updated += recompute_gates(adata, child)
     return updated

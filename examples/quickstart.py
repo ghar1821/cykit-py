@@ -9,7 +9,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-import cytopy
+import cykit
 
 #: Which control file stains which detector, for the directory
 #: ``make_demo_fcs.py`` writes. State this yourself: nothing infers it.
@@ -22,9 +22,9 @@ UNSTAINED_FILE = "Unstained.fcs"
 
 
 def main(path: str = "demo.fcs", controls: str | None = None) -> None:
-    adata = cytopy.read_fcs(path)
+    adata = cykit.read_fcs(path)
     print(adata)
-    print("fluorescence channels:", cytopy.get_fluor_channels(adata))
+    print("fluorescence channels:", cykit.get_fluor_channels(adata))
 
     # Every transform is explicit: the viewer plots whatever layer you point it
     # at, exactly as stored.
@@ -34,19 +34,19 @@ def main(path: str = "demo.fcs", controls: str | None = None) -> None:
         # controls instead (Bagwell and Adams). The mapping is yours to state.
         directory = Path(controls)
         stained = {
-            detector: cytopy.read_fcs(directory / name) for detector, name in CONTROL_FILES.items()
+            detector: cykit.read_fcs(directory / name) for detector, name in CONTROL_FILES.items()
         }
-        unstained = cytopy.read_fcs(directory / UNSTAINED_FILE)
-        spillover = cytopy.compute_spillover_matrix(stained, unstained=unstained)
+        unstained = cykit.read_fcs(directory / UNSTAINED_FILE)
+        spillover = cykit.compute_spillover_matrix(stained, unstained=unstained)
         print("spillover from controls:\n", spillover.round(4))
-    cytopy.compensate(adata, spillover, inplace=True)  # -> layers["comp"]
-    cytopy.asinh_transform(adata, 150.0, layer="comp", inplace=True)  # -> layers["asinh"]
+    cykit.compensate(adata, spillover, inplace=True)  # -> layers["comp"]
+    cykit.asinh_transform(adata, 150.0, layer="comp", inplace=True)  # -> layers["asinh"]
 
     # Pick the channels in the window. Gates drawn there are boolean columns
     # by the time this returns, because it blocks until you close it.
-    adata = cytopy.open_napari(adata, "asinh", block=True, verbose=True)
-    for name in adata.uns.get("cytopy", {}).get("gates", {}):
-        print(cytopy.gate_stats(adata, name))
+    adata = cykit.open_napari(adata, "asinh", block=True, verbose=True)
+    for name in adata.uns.get("cykit", {}).get("gates", {}):
+        print(cykit.gate_stats(adata, name))
     return adata
 
 

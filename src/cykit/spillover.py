@@ -3,7 +3,7 @@
 There are three ways to get a matrix, in increasing order of effort:
 
 * the acquisition software already computed one and wrote it into the FCS
-  file, where :func:`~cytopy.read_fcs` picks it up as ``adata.uns['spillover']``;
+  file, where :func:`~cykit.read_fcs` picks it up as ``adata.uns['spillover']``;
 * some other program exported one, and you read its CSV into a DataFrame
   yourself -- ``pd.read_csv(path, index_col=0)`` for the usual layout;
 * you have the single-stain controls, and :func:`compute_spillover_matrix`
@@ -12,7 +12,7 @@ There are three ways to get a matrix, in increasing order of effort:
 
 All three produce the same thing: a square DataFrame indexed by detector, with
 ``1`` on the diagonal, where ``S[i, j]`` is the fraction of dye *i*'s signal
-that lands in detector *j*. :func:`~cytopy.compensate` takes it from there.
+that lands in detector *j*. :func:`~cykit.compensate` takes it from there.
 """
 
 from __future__ import annotations
@@ -174,7 +174,7 @@ def compute_spillover_matrix(
     in the dye's own detector — gives spillover coefficients that are
     independent of how bright the control happened to be, and puts ``1`` on the
     diagonal by construction. Inverting the assembled matrix is what
-    :func:`~cytopy.compensate` then does, which is the N-parameter
+    :func:`~cykit.compensate` then does, which is the N-parameter
     generalisation Bagwell and Adams (1993) described.
 
     The negative population is taken from the control itself, which is what you
@@ -204,11 +204,11 @@ def compute_spillover_matrix(
         paper). Applied to both populations.
     positive_gate
         Name of a boolean ``obs`` column marking the stained events, as
-        written by :func:`~cytopy.add_gate`. Falls back to the automatic split
+        written by :func:`~cykit.add_gate`. Falls back to the automatic split
         for any control that lacks the column.
     negative_gate
         Name of a boolean ``obs`` column marking the control's negative
-        events, as drawn in :func:`~cytopy.open_napari_compensation`. A
+        events, as drawn in :func:`~cykit.open_napari_compensation`. A
         control that has it uses those events as its negative reference, even
         when ``unstained`` is given; one without it falls back to the whole
         ``unstained``, or else to every event outside the positive population.
@@ -249,7 +249,7 @@ def compute_spillover_matrix(
     -------
     DataFrame
         Square spillover matrix indexed and columned by the resolved detector
-        names, with ``1`` on the diagonal. ``.attrs['cytopy']`` carries the
+        names, with ``1`` on the diagonal. ``.attrs['cykit']`` carries the
         per-control event counts, thresholds and where each negative came
         from (``"control gate"``, ``"unstained"`` or ``"complement"``) for
         troubleshooting.
@@ -363,7 +363,7 @@ def compute_spillover_matrix(
         }
 
     out = pd.DataFrame(spill, index=pd.Index(names), columns=pd.Index(names))
-    out.attrs["cytopy"] = {
+    out.attrs["cykit"] = {
         "method": "bagwell-adams",
         "statistic": statistic,
         "negative": "unstained" if background is not None else "internal",
@@ -386,7 +386,7 @@ def subset_controls(
     controls
         Maps detector to its control.
     gate
-        ``obs`` column to subset on, as gated with :func:`~cytopy.gate`.
+        ``obs`` column to subset on, as gated with :func:`~cykit.gate`.
     required
         Raise if a control has no such column. ``False`` passes it through
         whole, which is rarely what you want and never silent -- a control that
@@ -436,13 +436,13 @@ def compensate(
     adata
         Cytometry AnnData.
     spillover
-        Square spillover matrix, in any of the forms cytopy can get one:
+        Square spillover matrix, in any of the forms cykit can get one:
 
         * ``None`` (default) uses ``adata.uns['spillover']``, which
-          :func:`~cytopy.read_fcs` parses from the file's ``$SPILLOVER``;
+          :func:`~cykit.read_fcs` parses from the file's ``$SPILLOVER``;
         * a DataFrame, whose index/columns name the detectors and need only
           cover a subset of the channels — as returned by
-          :func:`~cytopy.compute_spillover_matrix`, which derives one from
+          :func:`~cykit.compute_spillover_matrix`, which derives one from
           single-stain controls;
         * a bare array, assumed to be in :func:`get_fluor_channels` order.
     layer
@@ -461,7 +461,7 @@ def compensate(
     AnnData
         The annotated object, with the compensated matrix in
         ``adata.layers[key_added]`` and where the matrix came from in
-        ``adata.uns['cytopy']['spillover_source']``. Channels absent from the
+        ``adata.uns['cykit']['spillover_source']``. Channels absent from the
         matrix are copied through untouched.
 
     Raises
@@ -512,7 +512,7 @@ def compensate(
         raise ValueError(f"spillover matrix is singular and cannot be inverted: {exc}") from exc
     out[:, cols] = X[:, cols] @ inv
     adata.layers[key_added] = out.astype(adata.X.dtype, copy=False)
-    cytopy_uns = adata.uns.setdefault("cytopy", {})
-    cytopy_uns["compensated_layer"] = key_added
-    cytopy_uns["spillover_source"] = source
+    cykit_uns = adata.uns.setdefault("cykit", {})
+    cykit_uns["compensated_layer"] = key_added
+    cykit_uns["spillover_source"] = source
     return adata

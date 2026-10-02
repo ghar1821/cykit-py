@@ -2,14 +2,14 @@
 
 The viewer never transforms data. It plots the values of the layer you point
 it at, exactly as they are stored, so what you see is the result of the
-transform *you* ran (:func:`cytopy.asinh_transform`,
-:func:`cytopy.logicle_transform`, ...). The only thing it infers is how to
+transform *you* ran (:func:`cykit.asinh_transform`,
+:func:`cykit.logicle_transform`, ...). The only thing it infers is how to
 *label* the axes: when a layer records the transform that produced it, the
 ticks are drawn as decades of the original units, which is what makes an
 arcsinh or logicle layer read as a biexponential plot.
 
 That is the contract of :class:`CytoViewer`, and it is the reason there is a
-separate window for *choosing* a cofactor: :mod:`cytopy.cofactors` arcsinhs what
+separate window for *choosing* a cofactor: :mod:`cykit.cofactors` arcsinhs what
 it draws, but only for display, in memory, and it hands back numbers rather than
 a layer -- the same standing ``plot_biaxial(..., cofactor=...)`` has.
 """
@@ -242,7 +242,7 @@ class CytoViewer:
     ----------
     adata
         What to plot. One events x channels AnnData, e.g. from
-        :func:`cytopy.read_fcs`; a path to an FCS file, an ``.h5ad`` or a
+        :func:`cykit.read_fcs`; a path to an FCS file, an ``.h5ad`` or a
         directory; or several of either as a list or as a
         ``{name: object}`` mapping. Several are concatenated on the channels
         they share and become entries in the **sample** selector.
@@ -316,7 +316,7 @@ class CytoViewer:
         robust: bool = False,
         background: str = DEFAULT_BACKGROUND,
         viewer=None,
-        title: str = "cytopy",
+        title: str = "cykit",
     ):
         """Build the layers and the control panel, then draw. See the class docstring."""
         import napari
@@ -631,7 +631,7 @@ class CytoViewer:
         self.w_gate_load.changed.connect(self._load_gate_clicked)
         self.w_gate_delete.changed.connect(self._delete_gate_clicked)
 
-        self.viewer.window.add_dock_widget(self.widget, area="right", name="cytopy")
+        self.viewer.window.add_dock_widget(self.widget, area="right", name="cykit")
 
     # ------------------------------------------------------------- selection
     @contextmanager
@@ -1038,10 +1038,10 @@ class CytoViewer:
     def _limits(self, channel: str, values: np.ndarray, layer: str) -> tuple[float, float]:
         """Axis range for ``channel``.
 
-        The rule lives in :func:`~cytopy.axis_limits`, so the window and the
+        The rule lives in :func:`~cykit.axis_limits`, so the window and the
         static figures cannot come to disagree about an axis: an untransformed
         channel spans its detector's full ``$PnR``, and everything else spans
-        the data, widened by :data:`~cytopy.scales.AXIS_MARGIN` at each end.
+        the data, widened by :data:`~cykit.scales.AXIS_MARGIN` at each end.
 
         The "clip outliers" checkbox trades that for the 0.1-99.9th percentile,
         which keeps a single extreme event -- and compensation makes those --
@@ -1092,7 +1092,7 @@ class CytoViewer:
     def _axis_scale(self, channel: str, layer: str | None = None) -> Scale:
         """How to label the axis for ``channel``. Tick placement only.
 
-        The rule itself lives in :func:`~cytopy.axis_scale`, so the window and
+        The rule itself lives in :func:`~cykit.axis_scale`, so the window and
         the static figures cannot come to disagree about an axis. What is the
         window's own is the **axis ticks** setting, which overrides it.
         """
@@ -1103,7 +1103,7 @@ class CytoViewer:
 
     def _describe_transform(self) -> str:
         layer = self.panel.layer
-        info = self.adata.uns.get("cytopy", {})
+        info = self.adata.uns.get("cykit", {})
         if self.w_ticks.value == "transformed":
             return "ticks: transformed values, as stored"
         if layer != "X" and layer == info.get("asinh_layer"):
@@ -1300,7 +1300,7 @@ class CytoViewer:
         shape being drawn next. The label goes on the text layer rather than on
         the shapes, alongside the axis labels that are known to draw.
         """
-        gates = self.adata.uns.get("cytopy", {}).get("gates", {})
+        gates = self.adata.uns.get("cykit", {}).get("gates", {})
         shapes, kinds = [], []
         self._gate_labels: list[tuple[float, float, str]] = []
         panel = self.panel
@@ -1651,7 +1651,7 @@ class CytoViewer:
             If the gate was never recorded.
         """
         gate_record(self.adata, name)  # raises, listing what is recorded
-        gates = self.adata.uns.get("cytopy", {}).get("gates", {})
+        gates = self.adata.uns.get("cykit", {}).get("gates", {})
         gone = [name]
         for child in gate_children(self.adata, name):
             gone += self.delete_gate(child)
@@ -1700,7 +1700,7 @@ class CytoViewer:
         if parent == name:
             self.w_status.value = "a gate cannot be its own parent"
             return
-        replacing = name in self.adata.uns.get("cytopy", {}).get("gates", {})
+        replacing = name in self.adata.uns.get("cykit", {}).get("gates", {})
         mask = add_gate(
             self.adata,
             name,
@@ -2073,14 +2073,14 @@ def open_napari(
     block: bool | None = None,
     verbose: bool = False,
 ) -> ad.AnnData:
-    """Open the cytopy window on some data, and hand the data back when you close it.
+    """Open the cykit window on some data, and hand the data back when you close it.
 
     One window for both jobs. Look at the data, or draw gates on it, or both --
     the window is the same either way, which is why this is not called
     ``view`` or ``gate``.
 
     Each gate you apply becomes a boolean column in ``adata.obs``, with its
-    outline recorded in ``adata.uns['cytopy']['gates']``. **Gates already on
+    outline recorded in ``adata.uns['cykit']['gates']``. **Gates already on
     the data are loaded**, outlined where you drew them and offered as parents,
     so gating is something you come back to rather than do in one sitting.
 
@@ -2096,7 +2096,7 @@ def open_napari(
     ----------
     adata
         What to open. One events x channels AnnData, e.g. from
-        :func:`cytopy.read_fcs`; a path to an FCS file, an ``.h5ad`` or a
+        :func:`cykit.read_fcs`; a path to an FCS file, an ``.h5ad`` or a
         directory of FCS files; or several of either as a list or a
         ``{name: object}`` mapping, concatenated on the channels they share.
         Modified in place.
@@ -2139,7 +2139,7 @@ def open_napari(
     import napari
 
     adata = as_one_anndata(adata, names=names)
-    before = list(adata.uns.get("cytopy", {}).get("gates", {}))
+    before = list(adata.uns.get("cykit", {}).get("gates", {}))
     if verbose and before:
         print(f"loaded {len(before)} gate(s): {', '.join(before)}")
 
@@ -2157,7 +2157,7 @@ def open_napari(
         napari.run()
 
     if verbose:
-        after = adata.uns.get("cytopy", {}).get("gates", {})
+        after = adata.uns.get("cykit", {}).get("gates", {})
         drawn = [g for g in after if g not in before]
         print(f"gated: {', '.join(drawn) if drawn else 'nothing new'}")
     return adata

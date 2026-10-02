@@ -9,10 +9,10 @@ pytest.importorskip("qtpy")
 
 @pytest.fixture
 def cv(demo, make_napari_viewer):
-    import cytopy
+    import cykit
 
-    cytopy.asinh_transform(demo, 150.0, layer="X", inplace=True)
-    from cytopy.viewer import CytoViewer
+    cykit.asinh_transform(demo, 150.0, layer="X", inplace=True)
+    from cykit.viewer import CytoViewer
 
     return CytoViewer(
         demo,
@@ -66,7 +66,7 @@ def test_switching_channels_redraws(cv):
 
 
 def test_transformed_ticks_label_the_stored_values(cv):
-    from cytopy.scales import LinearScale, PretransformedScale
+    from cykit.scales import LinearScale, PretransformedScale
 
     assert isinstance(cv.x_scale, PretransformedScale)
     cv.w_ticks.value = "transformed"
@@ -77,10 +77,10 @@ def test_transformed_ticks_label_the_stored_values(cv):
 
 def test_the_viewer_never_transforms_the_data(cv):
     """What is plotted must be exactly what is stored in the layer."""
-    import cytopy
+    import cykit
 
     mask = cv.selection_mask()
-    j = cytopy.find_channel_name(cv.adata, "CD3 (FITC-A)")
+    j = cykit.find_channel_name(cv.adata, "CD3 (FITC-A)")
     assert np.allclose(cv._column("CD3 (FITC-A)", mask), cv.adata.layers["asinh"][mask, j])
     # ... and switching the tick mode must not touch the values either
     cv.w_ticks.value = "transformed"
@@ -88,7 +88,7 @@ def test_the_viewer_never_transforms_the_data(cv):
 
 
 def test_raw_X_gets_linear_ticks(cv):
-    from cytopy.scales import LinearScale
+    from cykit.scales import LinearScale
 
     cv.w_layer.value = "X"
     assert isinstance(cv.x_scale, LinearScale)
@@ -120,13 +120,13 @@ def test_gate_from_a_rectangle(cv):
     mask = cv.adata.obs["B cells"].to_numpy(dtype=bool)
     assert 0 < mask.sum() < cv.adata.n_obs
     # top-left of the canvas is low x (CD3) and high y (CD19)
-    import cytopy
+    import cykit
 
-    cd3 = cv.adata.layers["asinh"][:, cytopy.find_channel_name(cv.adata, "CD3")]
-    cd19 = cv.adata.layers["asinh"][:, cytopy.find_channel_name(cv.adata, "CD19")]
+    cd3 = cv.adata.layers["asinh"][:, cykit.find_channel_name(cv.adata, "CD3")]
+    cd19 = cv.adata.layers["asinh"][:, cykit.find_channel_name(cv.adata, "CD19")]
     assert cd19[mask].mean() > cd19[~mask].mean()
     assert cd3[mask].mean() < cd3[~mask].mean()
-    assert cv.adata.uns["cytopy"]["gates"]["B cells"]["x"] == "CD3 (FITC-A)"
+    assert cv.adata.uns["cykit"]["gates"]["B cells"]["x"] == "CD3 (FITC-A)"
 
 
 def test_gate_hierarchy_intersects_with_parent(cv):
@@ -147,7 +147,7 @@ def test_gate_hierarchy_intersects_with_parent(cv):
     child = cv.adata.obs["child"].to_numpy(dtype=bool)
     assert child.sum() > 0
     assert (child & ~cv.adata.obs["all"].to_numpy(dtype=bool)).sum() == 0
-    assert cv.adata.uns["cytopy"]["gates"]["child"]["parent"] == "all"
+    assert cv.adata.uns["cykit"]["gates"]["child"]["parent"] == "all"
 
 
 def test_parent_gate_subsets_the_plotted_events(cv):
@@ -188,10 +188,10 @@ def test_the_clip_checkbox_drives_it(cv):
 
 
 def test_channels_can_be_named_by_marker_or_detector(demo, make_napari_viewer):
-    import cytopy
-    from cytopy.viewer import CytoViewer
+    import cykit
+    from cykit.viewer import CytoViewer
 
-    cytopy.asinh_transform(demo, 150.0, layer="X", inplace=True)
+    cykit.asinh_transform(demo, 150.0, layer="X", inplace=True)
     cv = CytoViewer(demo, layer="asinh", x="CD3", y="PE-A", bins=64, viewer=make_napari_viewer())
     assert (cv.w_x.value, cv.w_y.value) == ("CD3 (FITC-A)", "CD19 (PE-A)")
 
@@ -200,7 +200,7 @@ def test_channels_can_be_named_by_marker_or_detector(demo, make_napari_viewer):
 # canvas background
 # --------------------------------------------------------------------------
 def test_background_is_white_by_default(cv):
-    from cytopy.viewer import DEFAULT_BACKGROUND
+    from cykit.viewer import DEFAULT_BACKGROUND
 
     assert DEFAULT_BACKGROUND == "white"
     assert cv.background == "white"
@@ -225,10 +225,10 @@ def test_empty_bins_are_transparent(cv):
 
 
 def test_decorations_flip_with_the_background(demo, make_napari_viewer):
-    from cytopy.viewer import CytoViewer
+    from cykit.viewer import CytoViewer
 
-    cytopy = __import__("cytopy")
-    cytopy.asinh_transform(demo, 150.0, layer="X", inplace=True)
+    cykit = __import__("cykit")
+    cykit.asinh_transform(demo, 150.0, layer="X", inplace=True)
     cv = CytoViewer(demo, layer="asinh", bins=64, viewer=make_napari_viewer())
 
     def text_colour():
@@ -252,9 +252,9 @@ def test_background_can_be_changed_from_the_widget(cv):
 
 
 def test_a_custom_background_is_accepted_and_nonsense_is_not(demo, make_napari_viewer):
-    from cytopy.viewer import CytoViewer
+    from cykit.viewer import CytoViewer
 
-    __import__("cytopy").asinh_transform(demo, 150.0, layer="X", inplace=True)
+    __import__("cykit").asinh_transform(demo, 150.0, layer="X", inplace=True)
     cv = CytoViewer(demo, layer="asinh", bins=64, background="#f5f5f5", viewer=make_napari_viewer())
     assert cv.background == "#f5f5f5"
     assert "#f5f5f5" in list(cv.w_background.choices)
@@ -273,26 +273,26 @@ def test_changing_the_colormap_keeps_the_fade(cv):
 # several samples in one window
 # --------------------------------------------------------------------------
 def test_as_one_anndata_leaves_a_single_object_alone(demo):
-    from cytopy.viewer import as_one_anndata
+    from cykit.viewer import as_one_anndata
 
     assert as_one_anndata(demo) is demo
 
 
 def test_as_one_anndata_concatenates_a_list(demo, demo_path):
-    import cytopy
-    from cytopy.viewer import as_one_anndata
+    import cykit
+    from cykit.viewer import as_one_anndata
 
-    second = cytopy.read_fcs(demo_path, sample_id="run2")
+    second = cykit.read_fcs(demo_path, sample_id="run2")
     out = as_one_anndata([demo, second])
     assert out.n_obs == demo.n_obs + second.n_obs
     assert sorted(out.obs["sample"].astype(str).unique()) == ["demo", "run2"]
 
 
 def test_as_one_anndata_takes_names_from_a_mapping(demo, demo_path):
-    import cytopy
-    from cytopy.viewer import as_one_anndata
+    import cykit
+    from cykit.viewer import as_one_anndata
 
-    second = cytopy.read_fcs(demo_path)
+    second = cykit.read_fcs(demo_path)
     out = as_one_anndata({"healthy": demo, "treated": second})
     assert sorted(out.obs["sample"].astype(str).unique()) == ["healthy", "treated"]
 
@@ -302,23 +302,23 @@ def test_as_one_anndata_takes_names_from_a_mapping(demo, demo_path):
 
 def test_same_named_files_do_not_merge(demo, demo_path):
     """Two files both called 'demo' must stay two entries in the selector."""
-    import cytopy
-    from cytopy.viewer import as_one_anndata
+    import cykit
+    from cykit.viewer import as_one_anndata
 
-    out = as_one_anndata([demo, cytopy.read_fcs(demo_path)])
+    out = as_one_anndata([demo, cykit.read_fcs(demo_path)])
     assert sorted(out.obs["sample"].astype(str).unique()) == ["demo", "demo.1"]
     assert out.n_obs == 2 * demo.n_obs
 
 
 def test_as_one_anndata_reads_paths(demo_path, tmp_path):
-    import cytopy
-    from cytopy.viewer import as_one_anndata
+    import cykit
+    from cykit.viewer import as_one_anndata
 
     assert as_one_anndata(demo_path).n_obs == 60_000
     assert as_one_anndata([demo_path, demo_path]).n_obs == 120_000
 
     h5 = tmp_path / "demo.h5ad"
-    cytopy.read_fcs(demo_path).write_h5ad(h5)
+    cykit.read_fcs(demo_path).write_h5ad(h5)
     assert as_one_anndata(h5).n_obs == 60_000
 
     import shutil
@@ -329,7 +329,7 @@ def test_as_one_anndata_reads_paths(demo_path, tmp_path):
 
 
 def test_as_one_anndata_rejects_nonsense(demo):
-    from cytopy.viewer import as_one_anndata
+    from cykit.viewer import as_one_anndata
 
     with pytest.raises(ValueError, match="nothing to view"):
         as_one_anndata([])
@@ -340,12 +340,12 @@ def test_as_one_anndata_rejects_nonsense(demo):
 
 
 def test_viewer_opens_on_several_samples(demo, demo_path, make_napari_viewer):
-    import cytopy
-    from cytopy.viewer import CytoViewer
+    import cykit
+    from cykit.viewer import CytoViewer
 
-    cytopy.asinh_transform(demo, 150.0, layer="X", inplace=True)
-    second = cytopy.read_fcs(demo_path, sample_id="run2")
-    cytopy.asinh_transform(second, 150.0, layer="X", inplace=True)
+    cykit.asinh_transform(demo, 150.0, layer="X", inplace=True)
+    second = cykit.read_fcs(demo_path, sample_id="run2")
+    cykit.asinh_transform(second, 150.0, layer="X", inplace=True)
 
     cv = CytoViewer(
         [demo, second],
@@ -367,10 +367,10 @@ def test_viewer_opens_on_several_samples(demo, demo_path, make_napari_viewer):
 
 def test_axes_stay_put_between_samples(demo, demo_path, make_napari_viewer):
     """Rescaling per sample is what makes two samples look alike when they are not."""
-    import cytopy
-    from cytopy.viewer import CytoViewer
+    import cykit
+    from cykit.viewer import CytoViewer
 
-    dim = cytopy.read_fcs(demo_path, sample_id="dim")
+    dim = cykit.read_fcs(demo_path, sample_id="dim")
     dim.X = dim.X * np.float32(0.25)
     cv = CytoViewer([demo, dim], x="CD3", y="CD19", bins=64, viewer=make_napari_viewer())
 
@@ -397,10 +397,10 @@ def _rect(cv, x_lo, x_hi, y_lo, y_hi):
 
 
 def _truth(adata, layer, x, y, box):
-    import cytopy
+    import cykit
 
     values = np.asarray(adata.layers[layer])
-    xi, yi = cytopy.find_channel_name(adata, x), cytopy.find_channel_name(adata, y)
+    xi, yi = cykit.find_channel_name(adata, x), cykit.find_channel_name(adata, y)
     return (
         (values[:, xi] > box[0])
         & (values[:, xi] < box[1])
@@ -495,13 +495,13 @@ def test_apply_gate_needs_a_shape(cv):
 @pytest.fixture
 def pair(demo, demo_path, make_napari_viewer):
     """Two samples in one viewer, the second a quarter as bright."""
-    import cytopy
-    from cytopy.viewer import CytoViewer
+    import cykit
+    from cykit.viewer import CytoViewer
 
-    cytopy.asinh_transform(demo, 150.0, layer="X", inplace=True)
-    dim = cytopy.read_fcs(demo_path, sample_id="dim")
+    cykit.asinh_transform(demo, 150.0, layer="X", inplace=True)
+    dim = cykit.read_fcs(demo_path, sample_id="dim")
     dim.X = dim.X * np.float32(0.4)
-    cytopy.asinh_transform(dim, 150.0, layer="X", inplace=True)
+    cykit.asinh_transform(dim, 150.0, layer="X", inplace=True)
     return CytoViewer(
         [demo, dim], layer="asinh", x="CD3", y="CD19", bins=128, viewer=make_napari_viewer()
     )
@@ -579,7 +579,7 @@ def test_the_y_axis_is_a_density_not_a_channel(pair):
 
 def test_every_curve_peaks_at_a_hundred(three):
     """Per cent of mode, the flow convention: a rare population is still legible."""
-    from cytopy.viewer import _MODE_TOP
+    from cykit.viewer import _MODE_TOP
 
     three.w_samples.value = ["demo", "c"]
     groups = three.histogram_groups()
@@ -599,13 +599,13 @@ def test_every_curve_peaks_at_a_hundred(three):
 
 def test_a_shape_gates_an_interval_on_a_histogram(cv):
     """There is no second channel to be inside of, so a box means an x range."""
-    import cytopy
+    import cykit
 
     cv.w_plot.value = "histogram"
     cv.gates.add_rectangles([_rect(cv, 3.0, 5.0, 0.0, 1.0)])
     mask = cv.current_gate_mask()
 
-    values = np.asarray(cv.adata.layers["asinh"])[:, cytopy.find_channel_name(cv.adata, "CD3")]
+    values = np.asarray(cv.adata.layers["asinh"])[:, cykit.find_channel_name(cv.adata, "CD3")]
     expected = (values >= 3.0) & (values <= 5.0)
     assert int(mask.sum()) == int(expected.sum())
     assert np.array_equal(mask, expected)
@@ -647,11 +647,11 @@ def _make_hierarchy(cv):
 
 def test_a_stored_gate_recomputes_to_exactly_what_was_drawn(cv):
     """The canvas maps data to pixels affinely, so the inside of a shape is the same."""
-    import cytopy
+    import cykit
 
     _make_hierarchy(cv)
     for name in ("parent", "child"):
-        assert np.array_equal(cytopy.gate_mask(cv.adata, name), cv.adata.obs[name].to_numpy())
+        assert np.array_equal(cykit.gate_mask(cv.adata, name), cv.adata.obs[name].to_numpy())
 
 
 def test_a_gate_can_be_put_back_on_the_canvas(cv):
@@ -677,7 +677,7 @@ def test_reapplying_an_untouched_gate_changes_nothing(cv):
 
 def test_adjusting_a_gate_brings_its_children_along(cv):
     """A child was worked out against the old outline; it is stale until recomputed."""
-    import cytopy
+    import cykit
 
     _, child_before = _make_hierarchy(cv)
     cv.load_gate("parent")
@@ -686,13 +686,13 @@ def test_adjusting_a_gate_brings_its_children_along(cv):
     cv.apply_gate("parent")
 
     assert int(cv.adata.obs["child"].sum()) < child_before
-    assert np.array_equal(cytopy.gate_mask(cv.adata, "child"), cv.adata.obs["child"].to_numpy())
+    assert np.array_equal(cykit.gate_mask(cv.adata, "child"), cv.adata.obs["child"].to_numpy())
     assert not (cv.adata.obs["child"] & ~cv.adata.obs["parent"]).any()
     assert "recomputed child" in cv.w_status.value
 
 
 def test_a_grandchild_is_recomputed_too(cv):
-    import cytopy
+    import cykit
 
     _make_hierarchy(cv)
     cv.w_parent.value = "child"
@@ -704,9 +704,9 @@ def test_a_grandchild_is_recomputed_too(cv):
     cv.gates.add_polygons([_rect(cv, 4.0, 9.0, -2.0, 9.0)])
     cv.apply_gate("parent")
 
-    assert cytopy.gate_children(cv.adata, "child") == ["grandchild"]
+    assert cykit.gate_children(cv.adata, "child") == ["grandchild"]
     assert np.array_equal(
-        cytopy.gate_mask(cv.adata, "grandchild"), cv.adata.obs["grandchild"].to_numpy()
+        cykit.gate_mask(cv.adata, "grandchild"), cv.adata.obs["grandchild"].to_numpy()
     )
     assert not (cv.adata.obs["grandchild"] & ~cv.adata.obs["parent"]).any()
 
@@ -715,7 +715,7 @@ def test_deleting_a_gate_takes_its_children_with_it(cv):
     _make_hierarchy(cv)
     assert cv.delete_gate("parent") == ["parent", "child"]
     assert "parent" not in cv.adata.obs and "child" not in cv.adata.obs
-    assert "parent" not in cv.adata.uns["cytopy"]["gates"]
+    assert "parent" not in cv.adata.uns["cykit"]["gates"]
     assert list(cv.w_gate_pick.choices) == ["<none>"]
 
 
@@ -727,9 +727,9 @@ def test_deleting_a_gate_a_panel_was_using_frees_the_panel(cv):
 
 
 def test_a_gate_with_no_outline_cannot_be_adjusted(cv):
-    import cytopy
+    import cykit
 
-    cytopy.add_gate(cv.adata, "from a mask", np.ones(cv.adata.n_obs, dtype=bool))
+    cykit.add_gate(cv.adata, "from a mask", np.ones(cv.adata.n_obs, dtype=bool))
     with pytest.raises(KeyError, match="no outline"):
         cv.load_gate("from a mask")
     with pytest.raises(KeyError, match="no gate"):
@@ -850,7 +850,7 @@ def test_a_label_sits_by_its_own_outline(cv):
 
 
 def test_the_y_label_reads_up_the_side(cv):
-    from cytopy.viewer import Y_LABEL_ROTATION
+    from cykit.viewer import Y_LABEL_ROTATION
 
     assert Y_LABEL_ROTATION == 270
     assert cv.ylabel.text.rotation == Y_LABEL_ROTATION
@@ -902,7 +902,7 @@ def test_a_gate_after_a_swap_uses_the_new_axes(cv):
     # x is now CD19 and y is CD3
     expected = _truth(cv.adata, "asinh", "CD19", "CD3", (0.0, 4.0, 3.0, 9.0))
     assert int(cv.adata.obs["swapped"].sum()) == int(expected.sum())
-    assert cv.adata.uns["cytopy"]["gates"]["swapped"]["x"] == "CD19 (PE-A)"
+    assert cv.adata.uns["cykit"]["gates"]["swapped"]["x"] == "CD19 (PE-A)"
 
 
 # --------------------------------------------------------------------------
@@ -911,15 +911,15 @@ def test_a_gate_after_a_swap_uses_the_new_axes(cv):
 @pytest.fixture
 def three(demo, demo_path, make_napari_viewer):
     """Three samples of decreasing brightness, in one viewer."""
-    import cytopy
-    from cytopy.viewer import CytoViewer
+    import cykit
+    from cykit.viewer import CytoViewer
 
-    cytopy.asinh_transform(demo, 150.0, layer="X", inplace=True)
+    cykit.asinh_transform(demo, 150.0, layer="X", inplace=True)
     parts = [demo]
     for name, factor in (("b", 0.6), ("c", 0.3)):
-        other = cytopy.read_fcs(demo_path, sample_id=name)
+        other = cykit.read_fcs(demo_path, sample_id=name)
         other.X = other.X * np.float32(factor)
-        cytopy.asinh_transform(other, 150.0, layer="X", inplace=True)
+        cykit.asinh_transform(other, 150.0, layer="X", inplace=True)
         parts.append(other)
     cv = CytoViewer(parts, layer="asinh", x="CD3", y="CD19", bins=128, viewer=make_napari_viewer())
     cv.set_plot(kind="histogram")
@@ -977,7 +977,7 @@ def test_a_parent_gate_still_narrows_the_curves(three):
 # the area under each curve
 # --------------------------------------------------------------------------
 def test_each_curve_is_filled_under_its_line(three):
-    from cytopy.viewer import CURVE_FILL_ALPHA
+    from cykit.viewer import CURVE_FILL_ALPHA
 
     three.w_samples.value = ["demo", "b"]
     kinds = [str(k) for k in three.curves.shape_type]
@@ -1019,7 +1019,7 @@ def test_gates_on_different_channel_pairs_in_one_session(cv):
     cv.gates.add_polygons([_rect(cv, 2.0, 9.0, 0.0, 9e4)])
     cv.apply_gate("cd8", parent="cells")
 
-    gates = cv.adata.uns["cytopy"]["gates"]
+    gates = cv.adata.uns["cykit"]["gates"]
     assert (gates["cells"]["x"], gates["cells"]["y"]) == ("CD3 (FITC-A)", "CD19 (PE-A)")
     assert (gates["cd8"]["x"], gates["cd8"]["y"]) == ("CD8 (APC-A)", "FSC-A")
     assert not (cv.adata.obs["cd8"] & ~cv.adata.obs["cells"]).any()
@@ -1027,10 +1027,10 @@ def test_gates_on_different_channel_pairs_in_one_session(cv):
 
 def test_gates_are_loaded_when_the_data_is_opened_again(demo, make_napari_viewer):
     """Gating is something you come back to, not do in one sitting."""
-    import cytopy
-    from cytopy.viewer import CytoViewer
+    import cykit
+    from cykit.viewer import CytoViewer
 
-    cytopy.asinh_transform(demo, 150.0, layer="X", inplace=True)
+    cykit.asinh_transform(demo, 150.0, layer="X", inplace=True)
     first = CytoViewer(demo, layer="asinh", x="CD3", y="CD19", bins=64, viewer=make_napari_viewer())
     first.gates.add_polygons([_rect(first, 2.0, 9.0, -2.0, 9.0)])
     first.apply_gate("cells")
@@ -1056,7 +1056,7 @@ def on_fixture_window(make_napari_viewer, monkeypatch):
     """
     import napari
 
-    import cytopy.viewer as viewer_module
+    import cykit.viewer as viewer_module
 
     window = make_napari_viewer()
     monkeypatch.setattr(napari, "Viewer", lambda **kwargs: window)
@@ -1065,24 +1065,24 @@ def on_fixture_window(make_napari_viewer, monkeypatch):
 
 
 def test_open_napari_returns_the_data_not_the_window(demo, on_fixture_window, capsys):
-    import cytopy
+    import cykit
 
-    cytopy.asinh_transform(demo, 150.0, layer="X", inplace=True)
-    cytopy.add_gate(demo, "earlier", np.ones(demo.n_obs, dtype=bool))
+    cykit.asinh_transform(demo, 150.0, layer="X", inplace=True)
+    cykit.add_gate(demo, "earlier", np.ones(demo.n_obs, dtype=bool))
 
-    out = cytopy.open_napari(demo, "asinh", block=False)
+    out = cykit.open_napari(demo, "asinh", block=False)
     assert out is demo  # the data, not the viewer
-    assert cytopy.current_viewer() is not None
-    assert cytopy.current_viewer().adata is demo
+    assert cykit.current_viewer() is not None
+    assert cykit.current_viewer().adata is demo
     assert capsys.readouterr().out == ""  # silent unless asked
 
 
 def test_open_napari_reports_gates_when_verbose(demo, on_fixture_window, capsys):
-    import cytopy
+    import cykit
 
-    cytopy.asinh_transform(demo, 150.0, layer="X", inplace=True)
-    cytopy.add_gate(demo, "earlier", np.ones(demo.n_obs, dtype=bool))
-    cytopy.open_napari(demo, "asinh", block=False, verbose=True)
+    cykit.asinh_transform(demo, 150.0, layer="X", inplace=True)
+    cykit.add_gate(demo, "earlier", np.ones(demo.n_obs, dtype=bool))
+    cykit.open_napari(demo, "asinh", block=False, verbose=True)
     printed = capsys.readouterr().out
     assert "loaded 1 gate(s): earlier" in printed
     assert "gated: nothing new" in printed
@@ -1090,10 +1090,10 @@ def test_open_napari_reports_gates_when_verbose(demo, on_fixture_window, capsys)
 
 def test_open_napari_takes_names_for_several_objects(demo, on_fixture_window):
     """The names bug: gate() used to resolve them twice and raise."""
-    import cytopy
+    import cykit
 
     other = demo.copy()
-    out = cytopy.open_napari([demo, other], "raw", names=["A", "B"], block=False)
+    out = cykit.open_napari([demo, other], "raw", names=["A", "B"], block=False)
     assert sorted(out.obs["sample"].astype(str).unique()) == ["A", "B"]
     assert out.n_obs == demo.n_obs * 2
 
@@ -1104,12 +1104,12 @@ def test_open_napari_takes_names_for_several_objects(demo, on_fixture_window):
 @pytest.fixture
 def pooled(demo, demo_path, make_napari_viewer):
     """Two files in one viewer, as a dict of samples."""
-    import cytopy
-    from cytopy.viewer import CytoViewer
+    import cykit
+    from cykit.viewer import CytoViewer
 
-    cytopy.asinh_transform(demo, 150.0, layer="X", inplace=True)
-    other = cytopy.read_fcs(demo_path, sample_id="b")
-    cytopy.asinh_transform(other, 150.0, layer="X", inplace=True)
+    cykit.asinh_transform(demo, 150.0, layer="X", inplace=True)
+    other = cykit.read_fcs(demo_path, sample_id="b")
+    cykit.asinh_transform(other, 150.0, layer="X", inplace=True)
     return CytoViewer(
         {"a": demo, "b": other},
         layer="asinh",
@@ -1159,7 +1159,7 @@ def test_regating_a_sample_can_still_turn_events_off(pooled):
 
 
 def test_splitting_back_out_keeps_the_gates(pooled):
-    import cytopy
+    import cykit
 
     pooled.gates.add_polygons([_rect(pooled, 2.0, 9.0, -2.0, 9.0)])
     pooled.apply_gate("singlets")
@@ -1168,34 +1168,34 @@ def test_splitting_back_out_keeps_the_gates(pooled):
         pooled.gates.add_polygons([_rect(pooled, 3.0, 9.0, 0.0, 4.0)])
         pooled.apply_gate("positive", parent="singlets")
 
-    out = cytopy.split_samples(pooled.adata)
+    out = cykit.split_samples(pooled.adata)
     assert sorted(out) == ["a", "b"]
     for name, part in out.items():
         assert part.n_obs == 60_000
         assert int(part.obs["positive"].sum()) > 0
         assert not (part.obs["positive"] & ~part.obs["singlets"]).any()
-        assert sorted(part.uns["cytopy"]["gates"]) == ["positive", "singlets"]
+        assert sorted(part.uns["cykit"]["gates"]) == ["positive", "singlets"]
 
 
 def test_open_napari_can_start_on_chosen_channels(demo, on_fixture_window):
     """x/y are a starting point; the window owns them afterwards."""
-    import cytopy
+    import cykit
 
-    cytopy.asinh_transform(demo, 150.0, layer="X", inplace=True)
-    cytopy.open_napari(demo, "asinh", x="CD3", y="CD19", block=False)
+    cykit.asinh_transform(demo, 150.0, layer="X", inplace=True)
+    cykit.open_napari(demo, "asinh", x="CD3", y="CD19", block=False)
 
-    cv = cytopy.current_viewer()
+    cv = cykit.current_viewer()
     assert (cv.panel.x, cv.panel.y) == ("CD3 (FITC-A)", "CD19 (PE-A)")
     assert (cv.w_x.value, cv.w_y.value) == ("CD3 (FITC-A)", "CD19 (PE-A)")
 
 
 def test_open_napari_can_start_on_one_sample(demo, on_fixture_window):
-    import cytopy
+    import cykit
 
     other = demo.copy()
-    cytopy.open_napari([demo, other], "raw", names=["A", "B"], samples=["B"], block=False)
+    cykit.open_napari([demo, other], "raw", names=["A", "B"], samples=["B"], block=False)
 
-    cv = cytopy.current_viewer()
+    cv = cykit.current_viewer()
     assert cv.panel.samples == ("B",)
     assert list(cv.w_samples.value) == ["B"]
     # only that sample's events are in scope
@@ -1204,12 +1204,12 @@ def test_open_napari_can_start_on_one_sample(demo, on_fixture_window):
 
 
 def test_open_napari_defaults_show_everything(demo, on_fixture_window):
-    import cytopy
+    import cykit
 
     other = demo.copy()
-    cytopy.open_napari([demo, other], "raw", names=["A", "B"], block=False)
+    cykit.open_napari([demo, other], "raw", names=["A", "B"], block=False)
 
-    cv = cytopy.current_viewer()
+    cv = cykit.current_viewer()
     assert cv.panel.samples == ()
     assert int(cv.selection_mask().sum()) == cv.adata.n_obs
 

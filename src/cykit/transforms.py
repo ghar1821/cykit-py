@@ -65,7 +65,7 @@ def get_fluor_channels(adata: ad.AnnData) -> list[str]:
     ----------
     adata
         Cytometry AnnData. Without a ``var['kind']`` column (which
-        :func:`~cytopy.read_fcs` adds) every channel is returned.
+        :func:`~cykit.read_fcs` adds) every channel is returned.
 
     Returns
     -------
@@ -117,7 +117,7 @@ def asinh_transform(
         and time channels are copied through unchanged.
     layer
         Input layer to read from, by name. ``"raw"`` is what
-        :func:`~cytopy.read_fcs` stores untouched; ``"X"`` is the working
+        :func:`~cykit.read_fcs` stores untouched; ``"X"`` is the working
         matrix, and ``"comp"`` the compensated one. Required, so a call
         always says which matrix it transformed.
     key_added
@@ -166,7 +166,7 @@ def asinh_transform(
     else:
         adata.layers[key_added] = out
     adata.var["cofactor"] = cofs
-    info = adata.uns.setdefault("cytopy", {})
+    info = adata.uns.setdefault("cykit", {})
     info["asinh_layer"] = key_added
     # Per layer as well, so a second transform does not orphan the first.
     info.setdefault("asinh_layers", {})[str(key_added)] = {
@@ -206,7 +206,7 @@ def logicle_transform(
         time channels are copied through unchanged.
     layer
         Input layer to read from, by name. ``"raw"`` is what
-        :func:`~cytopy.read_fcs` stores untouched; ``"X"`` is the working
+        :func:`~cykit.read_fcs` stores untouched; ``"X"`` is the working
         matrix, and ``"comp"`` the compensated one. Required, so a call
         always says which matrix it transformed.
     key_added
@@ -222,7 +222,7 @@ def logicle_transform(
         flowCore's ``logicleTransform``. Pass ``None`` to fit it per channel
         against the spread of that channel's negative values -- what
         flowCore's ``estimateLogicle`` does; see
-        :meth:`~cytopy.scales.LogicleScale.from_data`.
+        :meth:`~cykit.scales.LogicleScale.from_data`.
     A
         Additional decades of negative data shown below zero.
     inplace
@@ -235,7 +235,7 @@ def logicle_transform(
     AnnData
         The annotated object, with the transformed matrix in
         ``adata.layers[key_added]`` and the per-channel ``T``/``W``/``M``/``A``
-        in ``adata.uns['cytopy']['logicle_params']``, which the viewer reads
+        in ``adata.uns['cykit']['logicle_params']``, which the viewer reads
         back to label its axes in raw units.
     """
     adata = adata if inplace else adata.copy()
@@ -258,7 +258,7 @@ def logicle_transform(
         adata.X = out
     else:
         adata.layers[key_added] = out
-    info = adata.uns.setdefault("cytopy", {})
+    info = adata.uns.setdefault("cykit", {})
     info["logicle_params"] = params
     info["logicle_layer"] = key_added
     # Also by layer: transforming twice -- raw and compensated, say -- used to

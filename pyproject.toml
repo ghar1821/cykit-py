@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "cytopy"
+name = "cykit-py"
 version = "0.0.1-alpha"
 description = "Interactive cytometry analysis: FCS -> AnnData -> napari gating"
 readme = "README.md"
@@ -25,10 +25,10 @@ gui = ["napari[pyqt6]>=0.5", "magicgui>=0.8", "qtpy"]
 dev = ["pytest>=7", "pytest-qt>=4.4", "ruff"]
 
 [project.scripts]
-cytopy = "cytopy.__main__:main"
+cykit = "cykit.__main__:main"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/cytopy"]
+packages = ["src/cykit"]
 
 [tool.ruff]
 line-length = 100

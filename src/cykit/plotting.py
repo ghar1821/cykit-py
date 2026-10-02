@@ -2,7 +2,7 @@
 
 The napari viewer is for looking around; this is for the figures that stay
 put. Both draw the same thing the same way -- a smoothed 2-D histogram from
-:func:`~cytopy.density_image` -- so a saved plot matches what was on screen
+:func:`~cykit.density_image` -- so a saved plot matches what was on screen
 when the gate was drawn.
 
 Biaxial plots are coloured by event density by default. At a few million
@@ -63,7 +63,7 @@ def axis_scale(adata: ad.AnnData, channel: str, layer: str | None) -> Scale:
     """
     if layer in (None, "", LAYER_X):
         return LinearScale()
-    info = adata.uns.get("cytopy", {})
+    info = adata.uns.get("cykit", {})
     j = find_channel_name(adata, channel)
     name = str(adata.var_names[j])
     # Per-layer first: a file transformed twice keeps both.
@@ -90,7 +90,7 @@ def instrument_range(adata: ad.AnnData, channel: str) -> tuple[float, float] | N
     Parameters
     ----------
     adata
-        The AnnData; ``adata.var['pnr']`` is written by :func:`~cytopy.read_fcs`.
+        The AnnData; ``adata.var['pnr']`` is written by :func:`~cykit.read_fcs`.
     channel
         Channel to look up.
 
@@ -221,7 +221,7 @@ def plot_biaxial(
     adata
         Events x channels AnnData.
     x, y
-        Channels for the two axes. Any alias :func:`~cytopy.find_channel_name`
+        Channels for the two axes. Any alias :func:`~cykit.find_channel_name`
         accepts.
     layer
         Matrix to plot, by name -- ``"raw"``, ``"comp"``, ``"asinh"``, or
@@ -404,7 +404,7 @@ def _draw_gate(ax, adata: ad.AnnData, name: str, x_name: str, y_name: str) -> No
     """Outline a recorded gate, if it was drawn on these two channels."""
     from .gating import gate_record
 
-    if name not in adata.uns.get("cytopy", {}).get("gates", {}):
+    if name not in adata.uns.get("cykit", {}).get("gates", {}):
         return
     record = gate_record(adata, name)
     if record.x != x_name or record.y != y_name:
@@ -427,7 +427,7 @@ def plot_gate(adata: ad.AnnData, name: str, *, layer: str | None = None, ax=None
     """A gate in the plane it was drawn in, with the events it kept picked out.
 
     Reads the channels, layer and outline back from
-    ``adata.uns['cytopy']['gates'][name]``, so a gate drawn in the viewer
+    ``adata.uns['cykit']['gates'][name]``, so a gate drawn in the viewer
     weeks ago redraws exactly where it was.
 
     Parameters
@@ -488,7 +488,7 @@ def gating_pdf(
     Parameters
     ----------
     adata
-        AnnData carrying gates in ``uns['cytopy']['gates']``.
+        AnnData carrying gates in ``uns['cykit']['gates']``.
     path
         PDF file to write.
     title
@@ -506,7 +506,7 @@ def gating_pdf(
     seed
         Seed for the subsample, so the same events are drawn each time.
     **kwargs
-        Passed to :func:`~cytopy.plot_gate`.
+        Passed to :func:`~cykit.plot_gate`.
 
     Returns
     -------
@@ -527,7 +527,7 @@ def gating_pdf(
 
     from .gating import gate_order, gate_record
 
-    gates = adata.uns.get("cytopy", {}).get("gates", {})
+    gates = adata.uns.get("cykit", {}).get("gates", {})
     order = gate_order(adata)
     drawable = [g for g in order if g in adata.obs and gate_record(adata, g).has_outline()]
     if not drawable:
@@ -590,7 +590,7 @@ def _default_title(adata: ad.AnnData) -> str:
 def _draw_gate_page(plotted, adata, name, ax, plot_gate, kwargs) -> None:
     """One gate: its parent's events, its outline, and what it kept.
 
-    The figure itself is :func:`~cytopy.plot_gate`; what this adds is a title
+    The figure itself is :func:`~cykit.plot_gate`; what this adds is a title
     naming the lineage and the share kept, counted on the *whole* object rather
     than the thinned copy the page is drawn from.
     """

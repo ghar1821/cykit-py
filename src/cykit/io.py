@@ -24,7 +24,7 @@ def _sanitise_var_name(name: str) -> str:
     """Strip characters HDF5 reads as path separators out of a channel name.
 
     A ``/`` in a var name does not break the index itself -- that is written
-    as a plain string array -- but cytopy keys several ``uns`` dicts by
+    as a plain string array -- but cykit keys several ``uns`` dicts by
     channel name (``logicle_params``, ``asinh_layers``), and those keys become
     HDF5 names on write, where ``/`` means "subgroup". Writing the object then
     either nests the entry under a group that nothing reads back or fails
@@ -32,7 +32,7 @@ def _sanitise_var_name(name: str) -> str:
     ``Delta CoM (SSC (Imaging)/FSC)``.
 
     The original stays in ``var['channel']`` and ``var['label']``, and
-    :func:`~cytopy.transforms.find_channel_name` still resolves against both, so
+    :func:`~cykit.transforms.find_channel_name` still resolves against both, so
     looking a channel up by the name the file used keeps working.
     """
     return name.replace("/", "_")
@@ -59,7 +59,7 @@ def _build_var(flow_data, channel_count: int) -> pd.DataFrame:
     and ``$PnG`` alongside ``$PnN``/``$PnS`` -- this just transposes that into
     a table that can be ``adata.var``.
 
-    The ``label`` and ``kind`` columns are cytopy's, not the file's: ``label``
+    The ``label`` and ``kind`` columns are cykit's, not the file's: ``label``
     is the marker-and-detector name used for the var index and the axis titles,
     ``kind`` is the scatter/fluor/time split that decides which channels
     transforms and compensation touch by default.
@@ -114,7 +114,7 @@ def _spillover_from_text(
     the events are still worth having. One that parses but does not look like a
     spillover matrix -- anything but ``1`` down the diagonal -- is kept as it
     was found, with a warning. It is not inverted to make it one; deciding what
-    to do with it is :func:`~cytopy.compensate`'s job.
+    to do with it is :func:`~cykit.compensate`'s job.
     """
     lowered = {k.lower().lstrip("$"): v for k, v in text.items()}
     raw = lowered.get("spillover") or lowered.get("spill")

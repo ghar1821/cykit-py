@@ -18,9 +18,9 @@ def demo_path(tmp_path_factory):
 
 @pytest.fixture
 def demo(demo_path):
-    import cytopy
+    import cykit
 
-    return cytopy.read_fcs(demo_path)
+    return cykit.read_fcs(demo_path)
 
 
 @pytest.fixture(scope="session")
@@ -52,12 +52,12 @@ CONTROL_FILES = {
 @pytest.fixture
 def controls(controls_dir):
     """``(stained, unstained)``, the mapping `compute_spillover_matrix` takes."""
-    import cytopy
+    import cykit
 
     stained = {
-        detector: cytopy.read_fcs(controls_dir / name) for detector, name in CONTROL_FILES.items()
+        detector: cykit.read_fcs(controls_dir / name) for detector, name in CONTROL_FILES.items()
     }
-    return stained, cytopy.read_fcs(controls_dir / "Unstained.fcs")
+    return stained, cykit.read_fcs(controls_dir / "Unstained.fcs")
 
 
 @pytest.fixture(autouse=True)
@@ -82,10 +82,10 @@ def _close_open_napari_window():
     """
     yield
     try:
-        from cytopy import viewer
+        from cykit import viewer
     except ImportError:  # pragma: no cover - napari not installed
         return
-    from cytopy import cofactors, compensation
+    from cykit import cofactors, compensation
 
     for module, attr in (
         (viewer, "_CURRENT"),

@@ -8,7 +8,7 @@ Two steps, one window:
   and one for the negative. Both are gates on the **control**: the unstained is
   only there to look at, is never gated, and plays no part in the matrix.
   Gates land on the AnnData under the names
-  :func:`~cytopy.compute_spillover_matrix` looks for, so the matrix can be
+  :func:`~cykit.compute_spillover_matrix` looks for, so the matrix can be
   recomputed later without the window.
 * **check compensation** -- the N x N grid of biaxial plots: one row per
   single-stain control, one column per detector, the control's own detector
@@ -24,7 +24,7 @@ loaded into the table and the window opens on the second step, so a matrix
 you already have can be tuned without gating anything.
 
 Nothing here compensates the data. What comes back is the matrix; applying it
-is your own :func:`~cytopy.compensate` call.
+is your own :func:`~cykit.compensate` call.
 """
 
 from __future__ import annotations
@@ -108,10 +108,10 @@ class CompensationWindow:
     ----------
     controls
         Maps detector to its single-stain control, exactly as
-        :func:`~cytopy.compute_spillover_matrix` takes it -- ``{"FITC-A":
+        :func:`~cykit.compute_spillover_matrix` takes it -- ``{"FITC-A":
         adata}``, with markers accepted as keys. Must be ``AnnData`` rather than
         paths, because the gates are written onto them. Usually already cut
-        down to singlets with :func:`~cytopy.subset_controls`.
+        down to singlets with :func:`~cykit.subset_controls`.
     unstained
         The unstained control, overlaid on the gating plot as a reference for
         where unstained events sit. Display only: it is never gated and never
@@ -142,7 +142,7 @@ class CompensationWindow:
         Names of the two gates written on each control.
     statistic
         ``"median"`` or ``"mean"``, passed to
-        :func:`~cytopy.compute_spillover_matrix`.
+        :func:`~cykit.compute_spillover_matrix`.
     max_events
         Events plotted per tube. ``None`` plots every one. Gates and the
         matrix always use every event.
@@ -195,7 +195,7 @@ class CompensationWindow:
         colormap: str = "turbo",
         background: str | None = None,
         viewer=None,
-        title: str = "cytopy compensation",
+        title: str = "cykit compensation",
     ):
         """Resolve the controls and the starting matrix, build the panels, draw."""
         import napari
@@ -208,7 +208,7 @@ class CompensationWindow:
             if not isinstance(value, ad.AnnData):
                 raise TypeError(
                     f"control {key!r} is a {type(value).__name__}; read it with "
-                    "cytopy.read_fcs first, so the gates drawn here have somewhere to go"
+                    "cykit.read_fcs first, so the gates drawn here have somewhere to go"
                 )
         if not isinstance(unstained, ad.AnnData):
             raise TypeError("unstained must be an AnnData")
@@ -353,7 +353,7 @@ class CompensationWindow:
         file's ``$SPILLOVER`` covers the whole panel, but a detector nobody
         stained has no dye in it: kept, its row would be inverted as though one
         were there and push error into the real channels. So it is dropped,
-        and :func:`~cytopy.compensate` leaves that channel as it is. A control
+        and :func:`~cykit.compensate` leaves that channel as it is. A control
         detector the matrix does not cover starts on an identity row.
         """
         ref = self._reference
@@ -775,10 +775,10 @@ class CompensationWindow:
         Returns
         -------
         bool
-            Recorded on the control as ``uns["cytopy"]["use_unstained"]``, so
+            Recorded on the control as ``uns["cykit"]["use_unstained"]``, so
             the choice is still there when the window is opened again.
         """
-        info = self.controls[detector].uns.get("cytopy", {})
+        info = self.controls[detector].uns.get("cykit", {})
         return bool(info.get("use_unstained", False))
 
     def set_use_unstained(self, use: bool, detector: str | None = None) -> None:
@@ -804,7 +804,7 @@ class CompensationWindow:
         detector = self.control if detector is None else self._detector(detector)
         if use:
             layer_matrix(self.unstained, self.raw_layer)
-        info = self.controls[detector].uns.setdefault("cytopy", {})
+        info = self.controls[detector].uns.setdefault("cykit", {})
         if use:
             info["use_unstained"] = True
         else:
@@ -1469,7 +1469,7 @@ class CompensationWindow:
         columns = list(self.spillover.columns)
         for detector in self.detectors:
             self.spillover.loc[detector, columns] = computed.loc[detector, columns].to_numpy()
-        self.spillover.attrs["cytopy"] = computed.attrs.get("cytopy", {})
+        self.spillover.attrs["cykit"] = computed.attrs.get("cykit", {})
         self._baseline = self.spillover.copy()
         self.source = "computed"
         self.gates_changed = False
@@ -2377,7 +2377,7 @@ def _box(row: float, col: float, size: int) -> list[np.ndarray]:
 def _drop_gate(adata: ad.AnnData, name: str) -> None:
     """Remove a gate's column and its record."""
     adata.obs.drop(columns=[name], inplace=True, errors="ignore")
-    adata.uns.get("cytopy", {}).get("gates", {}).pop(name, None)
+    adata.uns.get("cykit", {}).get("gates", {}).pop(name, None)
 
 
 def _scatter_channels(adata: ad.AnnData) -> list[str]:
@@ -2461,7 +2461,7 @@ def open_napari_compensation(
     raw_layer
         Layer the matrix is computed from and applied to.
     positive_gate, negative_gate
-        Gate names, as :func:`~cytopy.compute_spillover_matrix` takes them.
+        Gate names, as :func:`~cykit.compute_spillover_matrix` takes them.
     statistic
         ``"median"`` or ``"mean"``.
     max_events
@@ -2479,7 +2479,7 @@ def open_napari_compensation(
     Returns
     -------
     DataFrame
-        The spillover matrix, ready for :func:`~cytopy.compensate`.
+        The spillover matrix, ready for :func:`~cykit.compensate`.
     """
     global _CURRENT_COMPENSATION
     import napari

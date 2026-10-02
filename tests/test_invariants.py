@@ -31,15 +31,15 @@ def _scale_fingerprint(scale, lo: float, hi: float):
 def test_viewer_and_plotting_agree_on_axis_scale(demo, make_napari_viewer):
     """The window and the static figures must label an axis identically."""
     pytest.importorskip("napari")
-    import cytopy
-    from cytopy.plotting import axis_scale
-    from cytopy.viewer import CytoViewer
+    import cykit
+    from cykit.plotting import axis_scale
+    from cykit.viewer import CytoViewer
 
     x, y = "CD3 (FITC-A)", "CD19 (PE-A)"
-    cytopy.asinh_transform(
+    cykit.asinh_transform(
         demo, 150.0, layer="X", inplace=True
     )  # -> layers["asinh"], records cofactors
-    cytopy.logicle_transform(demo, layer="X", inplace=True)  # -> layers["logicle"], records params
+    cykit.logicle_transform(demo, layer="X", inplace=True)  # -> layers["logicle"], records params
     demo.layers["untouched"] = demo.X.copy()  # a layer with no recorded transform
 
     cv = CytoViewer(demo, layer="asinh", x=x, y=y, bins=128, viewer=make_napari_viewer())
@@ -62,13 +62,13 @@ def test_viewer_transformed_ticks_override_is_viewer_only(demo, make_napari_view
     figure silently loses its raw-unit ticks.
     """
     pytest.importorskip("napari")
-    import cytopy
-    from cytopy.plotting import axis_scale
-    from cytopy.scales import LinearScale
-    from cytopy.viewer import CytoViewer
+    import cykit
+    from cykit.plotting import axis_scale
+    from cykit.scales import LinearScale
+    from cykit.viewer import CytoViewer
 
     x = "CD3 (FITC-A)"
-    cytopy.asinh_transform(demo, 150.0, layer="X", inplace=True)
+    cykit.asinh_transform(demo, 150.0, layer="X", inplace=True)
     cv = CytoViewer(
         demo, layer="asinh", x=x, y="CD19 (PE-A)", bins=128, viewer=make_napari_viewer()
     )
@@ -86,9 +86,9 @@ def test_viewer_transformed_ticks_override_is_viewer_only(demo, make_napari_view
 # which events get plotted. These literals are the tripwire.
 # --------------------------------------------------------------------------
 def test_subsample_is_reproducible(demo):
-    import cytopy
+    import cykit
 
-    out = cytopy.subsample(demo, 100, seed=0)
+    out = cykit.subsample(demo, 100, seed=0)
     assert out.n_obs == 100
     names = out.obs_names.tolist()
     assert names[:5] == [
@@ -100,20 +100,20 @@ def test_subsample_is_reproducible(demo):
     ]
     assert names[-3:] == ["demo_58162", "demo_58806", "demo_59786"]
     # Same seed, same draw; a different seed, a different draw.
-    assert cytopy.subsample(demo, 100, seed=0).obs_names.tolist() == names
-    assert cytopy.subsample(demo, 100, seed=1).obs_names.tolist() != names
+    assert cykit.subsample(demo, 100, seed=0).obs_names.tolist() == names
+    assert cykit.subsample(demo, 100, seed=1).obs_names.tolist() != names
 
 
 def test_subsample_per_sample_is_reproducible(demo):
     """`per_sample` draws within each sample, so the rng is consumed per group."""
-    import cytopy
+    import cykit
 
-    two = cytopy.concat_samples([demo.copy(), demo.copy()])
+    two = cykit.concat_samples([demo.copy(), demo.copy()])
     two.obs["sample"] = ["a"] * demo.n_obs + ["b"] * demo.n_obs
-    out = cytopy.subsample(two, 50, per_sample=True, seed=0)
+    out = cykit.subsample(two, 50, per_sample=True, seed=0)
     assert out.n_obs == 100
     assert out.obs["sample"].value_counts().to_dict() == {"a": 50, "b": 50}
-    assert cytopy.subsample(two, 50, per_sample=True, seed=0).obs_names.tolist() == (
+    assert cykit.subsample(two, 50, per_sample=True, seed=0).obs_names.tolist() == (
         out.obs_names.tolist()
     )
 
@@ -127,17 +127,17 @@ def test_subsample_per_sample_is_reproducible(demo):
 # --------------------------------------------------------------------------
 @pytest.fixture
 def two_samples(demo):
-    import cytopy
+    import cykit
 
     a, b = demo.copy(), demo.copy()
-    both = cytopy.concat_samples([a, b])
+    both = cykit.concat_samples([a, b])
     both.obs["sample"] = ["a"] * a.n_obs + ["b"] * b.n_obs
     return both
 
 
 def test_gate_on_one_sample_leaves_other_samples_false(two_samples):
     """A gate drawn on sample A must not claim events in sample B."""
-    from cytopy.gating import add_gate
+    from cykit.gating import add_gate
 
     labels = two_samples.obs["sample"].astype(str).to_numpy()
     in_a = labels == "a"
@@ -149,12 +149,12 @@ def test_gate_on_one_sample_leaves_other_samples_false(two_samples):
     assert stored[in_a].all()
     assert not stored[~in_a].any()
     assert two_samples.obs["g"].to_numpy(dtype=bool).tolist() == stored.tolist()
-    assert two_samples.uns["cytopy"]["gates"]["g"]["n"] == int(in_a.sum())
+    assert two_samples.uns["cykit"]["gates"]["g"]["n"] == int(in_a.sum())
 
 
 def test_regating_a_second_sample_keeps_the_first(two_samples):
     """The same gate name drawn on B afterwards adds B and keeps A."""
-    from cytopy.gating import add_gate
+    from cykit.gating import add_gate
 
     labels = two_samples.obs["sample"].astype(str).to_numpy()
     in_a, in_b = labels == "a", labels == "b"
@@ -164,12 +164,12 @@ def test_regating_a_second_sample_keeps_the_first(two_samples):
     stored = add_gate(two_samples, "g", everything, within=in_b)
 
     assert stored.all(), "A should have been kept while B was added"
-    assert two_samples.uns["cytopy"]["gates"]["g"]["n"] == two_samples.n_obs
+    assert two_samples.uns["cykit"]["gates"]["g"]["n"] == two_samples.n_obs
 
 
 def test_gate_without_within_rewrites_the_whole_column(two_samples):
     """No `within` means the gate owns the column outright."""
-    from cytopy.gating import add_gate
+    from cykit.gating import add_gate
 
     labels = two_samples.obs["sample"].astype(str).to_numpy()
     in_a = labels == "a"
@@ -191,13 +191,13 @@ def test_gate_without_within_rewrites_the_whole_column(two_samples):
 def test_gate_records_survive_h5ad_as_arrays(demo, tmp_path):
     import anndata
 
-    import cytopy
+    import cykit
 
     verts = [[500.0, -200.0], [500.0, 2000.0], [20000.0, 2000.0], [20000.0, -200.0]]
-    x = np.asarray(demo.X[:, cytopy.find_channel_name(demo, "CD3")], dtype=float)
-    y = np.asarray(demo.X[:, cytopy.find_channel_name(demo, "CD19")], dtype=float)
-    mask = cytopy.polygon_mask(np.column_stack([x, y]), np.asarray(verts))
-    cytopy.add_gate(
+    x = np.asarray(demo.X[:, cykit.find_channel_name(demo, "CD3")], dtype=float)
+    y = np.asarray(demo.X[:, cykit.find_channel_name(demo, "CD19")], dtype=float)
+    mask = cykit.polygon_mask(np.column_stack([x, y]), np.asarray(verts))
+    cykit.add_gate(
         demo,
         "lymphs",
         mask,
@@ -215,9 +215,9 @@ def test_gate_records_survive_h5ad_as_arrays(demo, tmp_path):
     back = anndata.read_h5ad(path)
 
     # This is the shape that used to break the callers.
-    assert isinstance(back.uns["cytopy"]["gates"]["lymphs"]["vertices"], np.ndarray)
+    assert isinstance(back.uns["cykit"]["gates"]["lymphs"]["vertices"], np.ndarray)
 
-    record = cytopy.gate_record(back, "lymphs")
+    record = cykit.gate_record(back, "lymphs")
     assert record.has_outline()
     assert record.layer == "X"
     assert record.shape_types == ["polygon"]
@@ -225,21 +225,21 @@ def test_gate_records_survive_h5ad_as_arrays(demo, tmp_path):
     assert record.vertices[0].shape == (4, 2)
 
     # And the things that read a record all cope.
-    assert cytopy.gate_mask(back, "lymphs").sum() == mask.sum()
-    cytopy.plot_gate(back, "lymphs")
-    cytopy.gating_pdf(back, tmp_path / "gates.pdf")
+    assert cykit.gate_mask(back, "lymphs").sum() == mask.sum()
+    cykit.plot_gate(back, "lymphs")
+    cykit.gating_pdf(back, tmp_path / "gates.pdf")
 
 
 def test_gate_order_is_parents_before_children(demo):
-    import cytopy
+    import cykit
 
     everything = np.ones(demo.n_obs, dtype=bool)
-    cytopy.add_gate(demo, "cells", everything)
-    cytopy.add_gate(demo, "singlets", everything, parent="cells")
-    cytopy.add_gate(demo, "live", everything, parent="singlets")
-    cytopy.add_gate(demo, "other", everything)
+    cykit.add_gate(demo, "cells", everything)
+    cykit.add_gate(demo, "singlets", everything, parent="cells")
+    cykit.add_gate(demo, "live", everything, parent="singlets")
+    cykit.add_gate(demo, "other", everything)
 
-    order = cytopy.gate_order(demo)
+    order = cykit.gate_order(demo)
     assert order.index("cells") < order.index("singlets") < order.index("live")
     assert set(order) == {"cells", "singlets", "live", "other"}
 
@@ -254,9 +254,9 @@ def test_gate_order_is_parents_before_children(demo):
 @pytest.mark.parametrize(
     ("call", "layer_added"),
     [
-        (lambda a: __import__("cytopy").compensate(a), "comp"),
-        (lambda a: __import__("cytopy").asinh_transform(a, 150.0, layer="raw"), "asinh"),
-        (lambda a: __import__("cytopy").logicle_transform(a, layer="raw"), "logicle"),
+        (lambda a: __import__("cykit").compensate(a), "comp"),
+        (lambda a: __import__("cykit").asinh_transform(a, 150.0, layer="raw"), "asinh"),
+        (lambda a: __import__("cykit").logicle_transform(a, layer="raw"), "logicle"),
     ],
     ids=["compensate", "asinh_transform", "logicle_transform"],
 )
@@ -273,12 +273,12 @@ def test_the_default_returns_a_copy_and_leaves_the_original_alone(demo, call, la
 @pytest.mark.parametrize(
     ("call", "layer_added"),
     [
-        (lambda a: __import__("cytopy").compensate(a, inplace=True), "comp"),
+        (lambda a: __import__("cykit").compensate(a, inplace=True), "comp"),
         (
-            lambda a: __import__("cytopy").asinh_transform(a, 150.0, layer="raw", inplace=True),
+            lambda a: __import__("cykit").asinh_transform(a, 150.0, layer="raw", inplace=True),
             "asinh",
         ),
-        (lambda a: __import__("cytopy").logicle_transform(a, layer="raw", inplace=True), "logicle"),
+        (lambda a: __import__("cykit").logicle_transform(a, layer="raw", inplace=True), "logicle"),
     ],
     ids=["compensate", "asinh_transform", "logicle_transform"],
 )
@@ -291,12 +291,12 @@ def test_inplace_true_modifies_and_hands_the_same_object_back(demo, call, layer_
 
 def test_copy_is_gone_as_a_keyword(demo):
     """The old name must fail loudly rather than being silently ignored."""
-    import cytopy
+    import cykit
 
     for call in (
-        lambda: cytopy.compensate(demo, copy=True),
-        lambda: cytopy.asinh_transform(demo, 150.0, layer="raw", copy=True),
-        lambda: cytopy.logicle_transform(demo, layer="raw", copy=True),
+        lambda: cykit.compensate(demo, copy=True),
+        lambda: cykit.asinh_transform(demo, 150.0, layer="raw", copy=True),
+        lambda: cykit.logicle_transform(demo, layer="raw", copy=True),
     ):
         with pytest.raises(TypeError, match="copy"):
             call()
@@ -308,11 +308,11 @@ def test_copy_is_gone_as_a_keyword(demo):
 def test_viewer_and_plotting_agree_on_axis_limits(demo, make_napari_viewer):
     """Same rule, one function: an FSC/SSC panel is square in both."""
     pytest.importorskip("napari")
-    import cytopy
-    from cytopy.plotting import axis_limits
-    from cytopy.viewer import CytoViewer
+    import cykit
+    from cykit.plotting import axis_limits
+    from cykit.viewer import CytoViewer
 
-    cytopy.asinh_transform(demo, 150.0, layer="X", inplace=True)
+    cykit.asinh_transform(demo, 150.0, layer="X", inplace=True)
     cv = CytoViewer(demo, layer="asinh", x="FSC-A", y="SSC-A", bins=64, viewer=make_napari_viewer())
     axes = cv.panel.axes
     values = np.asarray(demo[:, "FSC-A"].layers["asinh"]).ravel()

@@ -9,7 +9,7 @@ exactly what ``np.histogram2d`` would have.
 import numpy as np
 import pytest
 
-from cytopy.density import Axes2D, density_image
+from cykit.density import Axes2D, density_image
 
 
 def _reference(x, y, axes):

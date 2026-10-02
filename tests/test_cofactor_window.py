@@ -13,7 +13,7 @@ RANGE = (1.0, 10_000.0)
 
 @pytest.fixture
 def cw(demo, make_napari_viewer):
-    from cytopy.cofactors import CofactorWindow
+    from cykit.cofactors import CofactorWindow
 
     return CofactorWindow(demo, "raw", cofactor_range=RANGE, bins=64, viewer=make_napari_viewer())
 
@@ -24,7 +24,7 @@ def _snapshot(adata):
         "layers": {k: np.array(v, copy=True) for k, v in adata.layers.items()},
         "var": adata.var.copy(deep=True),
         "obs": adata.obs.copy(deep=True),
-        "uns": repr(adata.uns.get("cytopy", {})),
+        "uns": repr(adata.uns.get("cykit", {})),
     }
 
 
@@ -35,7 +35,7 @@ def _assert_same(before, adata):
         assert np.array_equal(matrix, np.asarray(adata.layers[key])), key
     assert list(before["var"].columns) == list(adata.var.columns)
     assert list(before["obs"].columns) == list(adata.obs.columns)
-    assert before["uns"] == repr(adata.uns.get("cytopy", {}))
+    assert before["uns"] == repr(adata.uns.get("cykit", {}))
 
 
 # --------------------------------------------------------------------- contract
@@ -48,15 +48,15 @@ def test_the_transform_window_writes_nothing_to_the_adata(cw):
     cw.set_cofactor(cw.y, 900.0)
     _assert_same(before, cw.adata)
     assert "cofactor" not in cw.adata.var
-    assert "asinh_layer" not in cw.adata.uns.get("cytopy", {})
+    assert "asinh_layer" not in cw.adata.uns.get("cykit", {})
     assert "asinh" not in cw.adata.layers
 
 
 def test_the_displayed_values_are_the_stored_values_arcsinh_the_current_cofactor(cw, demo):
-    import cytopy
+    import cykit
 
     cw.set_cofactor(cw.x, 37.0)
-    j = cytopy.find_channel_name(demo, cw.x)
+    j = cykit.find_channel_name(demo, cw.x)
     raw = np.asarray(demo.layers["raw"][:, j], dtype=np.float32).ravel()
     shown = cw._channel_data(cw.x).display(37.0)
     assert np.allclose(shown, np.arcsinh(raw / 37.0), atol=1e-6)
@@ -75,7 +75,7 @@ def test_the_seed_is_the_geometric_midpoint_of_the_range_when_none_is_given(cw):
 
 
 def test_a_mapping_seed_is_read_the_way_asinh_transform_reads_one(demo, make_napari_viewer):
-    from cytopy.cofactors import CofactorWindow
+    from cykit.cofactors import CofactorWindow
 
     window = CofactorWindow(
         demo,
@@ -91,7 +91,7 @@ def test_a_mapping_seed_is_read_the_way_asinh_transform_reads_one(demo, make_nap
 
 
 def test_a_seed_outside_the_range_is_refused_rather_than_clamped(demo, make_napari_viewer):
-    from cytopy.cofactors import CofactorWindow
+    from cykit.cofactors import CofactorWindow
 
     with pytest.raises(ValueError, match="outside cofactor_range"):
         CofactorWindow(
@@ -106,7 +106,7 @@ def test_a_seed_outside_the_range_is_refused_rather_than_clamped(demo, make_napa
 
 @pytest.mark.parametrize("bad", [(0.0, 10.0), (10.0, 1.0), (1.0, np.inf), (5.0, 5.0), 7.0])
 def test_the_range_must_be_positive_and_increasing(demo, make_napari_viewer, bad):
-    from cytopy.cofactors import CofactorWindow
+    from cykit.cofactors import CofactorWindow
 
     with pytest.raises(ValueError, match="cofactor_range"):
         CofactorWindow(demo, "raw", cofactor_range=bad, bins=64, viewer=make_napari_viewer())
@@ -209,7 +209,7 @@ def test_every_slider_position_survives_a_redraw(cw):
     does not survive that round trip is one the handle drifts away from while
     the number beside it stays put.
     """
-    from cytopy.cofactors import SLIDER_STEPS
+    from cykit.cofactors import SLIDER_STEPS
 
     q = cw.w_cx._widget._qwidget
     moved = []
@@ -222,7 +222,7 @@ def test_every_slider_position_survives_a_redraw(cw):
 
 
 def test_both_ends_of_the_range_are_reachable(cw):
-    from cytopy.cofactors import SLIDER_STEPS
+    from cykit.cofactors import SLIDER_STEPS
 
     q = cw.w_cx._widget._qwidget
     for value, want in ((RANGE[0], 0), (RANGE[1], SLIDER_STEPS)):
@@ -301,12 +301,12 @@ def test_the_y_box_comes_alive_on_a_fluorescence_channel(cw):
 # ----------------------------------------------------------------- axis margin
 def test_the_default_margin_keeps_the_axis_near_the_data(cw):
     """The axis must not run decades past the last event it has to show."""
-    import cytopy
-    from cytopy.scales import AXIS_MARGIN
+    import cykit
+    from cykit.scales import AXIS_MARGIN
 
     assert cw.margin == AXIS_MARGIN
     cw.set_cofactor(cw.x, 500.0)
-    j = cytopy.find_channel_name(cw.adata, cw.x)
+    j = cykit.find_channel_name(cw.adata, cw.x)
     raw = np.asarray(cw.adata.layers["raw"][:, j]).ravel()
     top = float(np.sinh(cw.p_x.axes.x_hi) * 500.0)
     assert top < 2.0 * raw.max()
@@ -345,7 +345,7 @@ def test_an_out_of_range_margin_is_refused(cw, bad):
 
 # ------------------------------------------------------------------ axis ticks
 def test_untransformed_ticks_label_the_original_units(cw):
-    from cytopy.scales import PretransformedScale
+    from cykit.scales import PretransformedScale
 
     assert cw.w_ticks.value == "untransformed"
     cw.set_cofactor(cw.x, 500.0)
@@ -355,7 +355,7 @@ def test_untransformed_ticks_label_the_original_units(cw):
 
 
 def test_transformed_ticks_label_the_arcsinh_values(cw):
-    from cytopy.scales import LinearScale
+    from cykit.scales import LinearScale
 
     cw.w_ticks.value = "transformed"
     assert isinstance(cw.p_x.x_scale, LinearScale)
@@ -373,7 +373,7 @@ def test_the_tick_mode_moves_nothing(cw):
 
 
 def test_an_unknown_tick_mode_is_refused(demo, make_napari_viewer):
-    from cytopy.cofactors import CofactorWindow
+    from cykit.cofactors import CofactorWindow
 
     with pytest.raises(ValueError, match="ticks must be one of"):
         CofactorWindow(
@@ -409,7 +409,7 @@ def test_the_y_slider_is_greyed_out_while_y_is_scatter(cw):
 
 
 def test_y_falls_back_to_another_channel_when_there_is_no_scatter(demo, make_napari_viewer):
-    from cytopy.cofactors import CofactorWindow
+    from cykit.cofactors import CofactorWindow
 
     fluor = [c for c in demo.var_names if demo.var["kind"].loc[c] == "fluor"]
     window = CofactorWindow(
@@ -480,7 +480,7 @@ def test_a_larger_cofactor_compresses_the_axis(cw):
 
 
 def test_the_axis_limits_come_from_raw_quantiles_transformed_not_re_percentiled(cw):
-    from cytopy.scales import AsinhScale, PretransformedScale
+    from cykit.scales import AsinhScale, PretransformedScale
 
     data = cw._channel_data(cw.x)
     for cofactor in (5.0, 150.0, 3000.0):
@@ -503,7 +503,7 @@ def test_a_channels_raw_quantiles_are_computed_once_per_channel(cw, monkeypatch)
 
 
 def test_the_raw_column_cache_is_bounded(demo, make_napari_viewer):
-    from cytopy.cofactors import CACHE_SIZE, CofactorWindow
+    from cykit.cofactors import CACHE_SIZE, CofactorWindow
 
     window = CofactorWindow(demo, "raw", cofactor_range=RANGE, bins=64, viewer=make_napari_viewer())
     for name in list(demo.var_names) * 3:
@@ -512,8 +512,8 @@ def test_the_raw_column_cache_is_bounded(demo, make_napari_viewer):
 
 
 def test_the_statistics_are_computed_on_every_event_not_the_subsample(demo, make_napari_viewer):
-    import cytopy
-    from cytopy.cofactors import CofactorWindow
+    import cykit
+    from cykit.cofactors import CofactorWindow
 
     window = CofactorWindow(
         demo,
@@ -524,13 +524,13 @@ def test_the_statistics_are_computed_on_every_event_not_the_subsample(demo, make
         viewer=make_napari_viewer(),
     )
     assert window.n_plotted == 1_000
-    j = cytopy.find_channel_name(demo, window.x)
+    j = cykit.find_channel_name(demo, window.x)
     column = np.asarray(demo.layers["raw"][:, j], dtype=np.float32).ravel()
     assert window.statistics()["n_negative"] == float((column < 0).sum())
 
 
 def test_the_same_seed_draws_the_same_events(demo, make_napari_viewer):
-    from cytopy.cofactors import CofactorWindow
+    from cykit.cofactors import CofactorWindow
 
     made = [
         CofactorWindow(
@@ -549,7 +549,7 @@ def test_the_same_seed_draws_the_same_events(demo, make_napari_viewer):
 
 # --------------------------------------------------------------------- overlays
 def test_the_knee_line_sits_at_asinh_of_one_whatever_the_cofactor(cw):
-    from cytopy.cofactors import KNEE
+    from cykit.cofactors import KNEE
 
     assert KNEE == pytest.approx(float(np.arcsinh(1.0)))
     seen = []
@@ -581,11 +581,11 @@ def test_the_negative_band_widens_as_the_cofactor_falls(cw):
 
 
 def test_a_channel_with_no_negative_population_says_so(demo, make_napari_viewer):
-    import cytopy
-    from cytopy.cofactors import CofactorWindow
+    import cykit
+    from cykit.cofactors import CofactorWindow
 
     positive = demo.copy()
-    j = cytopy.find_channel_name(positive, "CD3 (FITC-A)")
+    j = cykit.find_channel_name(positive, "CD3 (FITC-A)")
     raw = np.asarray(positive.layers["raw"], dtype=np.float32)
     raw[:, j] = np.abs(raw[:, j]) + 1.0
     positive.layers["raw"] = raw
@@ -610,15 +610,15 @@ def test_the_repr_is_a_python_dict_literal_that_round_trips(cw):
 
 
 def test_the_cofactors_go_straight_into_asinh_transform(cw, demo):
-    import cytopy
+    import cykit
 
     cw.set_cofactor(cw.x, 220.0)
     cw.step(1)
     cw.set_cofactor(cw.x, 1750.0)
 
-    out = cytopy.asinh_transform(demo, cw.cofactors, layer="raw")
+    out = cykit.asinh_transform(demo, cw.cofactors, layer="raw")
     for name, cofactor in cw.cofactors.items():
-        j = cytopy.find_channel_name(out, name)
+        j = cykit.find_channel_name(out, name)
         assert float(out.var["cofactor"].iloc[j]) == pytest.approx(cofactor)
         raw = np.asarray(out.layers["raw"][:, j], dtype=float)
         assert np.allclose(
@@ -629,7 +629,7 @@ def test_the_cofactors_go_straight_into_asinh_transform(cw, demo):
 
 
 def test_the_dict_it_returns_can_seed_the_next_session(cw, demo, make_napari_viewer):
-    from cytopy.cofactors import CofactorWindow
+    from cykit.cofactors import CofactorWindow
 
     cw.set_cofactor(cw.x, 640.0)
     again = CofactorWindow(
@@ -652,7 +652,7 @@ def on_fixture_window(make_napari_viewer, monkeypatch):
     """
     import napari
 
-    import cytopy.cofactors as module
+    import cykit.cofactors as module
 
     window = make_napari_viewer()
     monkeypatch.setattr(napari, "Viewer", lambda **kwargs: window)
@@ -663,13 +663,13 @@ def on_fixture_window(make_napari_viewer, monkeypatch):
 def test_open_napari_transform_returns_the_live_dict_and_leaves_the_data_alone(
     demo, on_fixture_window, capsys
 ):
-    import cytopy
-    from cytopy.cofactors import Cofactors, current_transform_window
+    import cykit
+    from cykit.cofactors import Cofactors, current_transform_window
 
     before = _snapshot(demo)
-    result = cytopy.open_napari_transform(demo, "raw", cofactor_range=RANGE, bins=64, block=False)
+    result = cykit.open_napari_transform(demo, "raw", cofactor_range=RANGE, bins=64, block=False)
     assert isinstance(result, Cofactors)
-    assert set(result) == set(cytopy.get_fluor_channels(demo))
+    assert set(result) == set(cykit.get_fluor_channels(demo))
     assert capsys.readouterr().out == ""  # silent unless asked
 
     window = current_transform_window()
@@ -680,9 +680,9 @@ def test_open_napari_transform_returns_the_live_dict_and_leaves_the_data_alone(
 
 
 def test_open_napari_transform_prints_the_literal_when_verbose(demo, on_fixture_window, capsys):
-    import cytopy
+    import cykit
 
-    cytopy.open_napari_transform(
+    cykit.open_napari_transform(
         demo, "raw", cofactor_range=RANGE, bins=64, block=False, verbose=True
     )
     printed = capsys.readouterr().out
@@ -691,10 +691,10 @@ def test_open_napari_transform_prints_the_literal_when_verbose(demo, on_fixture_
 
 
 def test_open_napari_transform_can_start_on_chosen_channels(demo, on_fixture_window):
-    import cytopy
-    from cytopy.cofactors import current_transform_window
+    import cykit
+    from cykit.cofactors import current_transform_window
 
-    cytopy.open_napari_transform(
+    cykit.open_napari_transform(
         demo,
         "raw",
         "CD8 (APC-A)",

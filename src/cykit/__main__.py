@@ -1,4 +1,4 @@
-"""Command line entry point: ``cytopy sample.fcs``."""
+"""Command line entry point: ``cykit sample.fcs``."""
 
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ def main(argv: list[str] | None = None) -> int:
     int
         Process exit status; ``0`` once the window has been closed.
     """
-    p = argparse.ArgumentParser(prog="cytopy", description=__doc__)
+    p = argparse.ArgumentParser(prog="cykit", description=__doc__)
     p.add_argument(
         "path",
         type=Path,
@@ -37,28 +37,28 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--subsample", type=int, default=0, help="plot at most N events")
     args = p.parse_args(argv)
 
-    import cytopy
-    from cytopy.viewer import as_one_anndata
+    import cykit
+    from cykit.viewer import as_one_anndata
 
     adata = as_one_anndata(args.path if len(args.path) > 1 else args.path[0])
     print(adata)
 
     layer = "raw"
     if args.compensate:
-        cytopy.compensate(adata, inplace=True)
+        cykit.compensate(adata, inplace=True)
         layer = "comp"
     if args.asinh and args.logicle:
         p.error("pick one of --asinh / --logicle")
     if args.asinh:
-        cytopy.asinh_transform(adata, args.cofactor, layer=layer, inplace=True)
+        cykit.asinh_transform(adata, args.cofactor, layer=layer, inplace=True)
         layer = "asinh"
     if args.logicle:
-        cytopy.logicle_transform(adata, layer=layer, inplace=True)
+        cykit.logicle_transform(adata, layer=layer, inplace=True)
         layer = "logicle"
     if args.subsample:
-        adata = cytopy.subsample(adata, args.subsample)
+        adata = cykit.subsample(adata, args.subsample)
 
-    cytopy.open_napari(adata, layer, x=args.x_channel, y=args.y_channel, block=True, verbose=True)
+    cykit.open_napari(adata, layer, x=args.x_channel, y=args.y_channel, block=True, verbose=True)
     return 0
 
 

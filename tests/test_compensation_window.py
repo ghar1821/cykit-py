@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-import cytopy
+import cykit
 
 pytest.importorskip("napari")
 pytest.importorskip("qtpy")
@@ -20,12 +20,12 @@ NEGATIVE = (-50.0, float(np.arcsinh(200 / COFACTOR)))
 def tubes(controls):
     stained, unstained = controls
     for adata in (*stained.values(), unstained):
-        cytopy.asinh_transform(adata, COFACTOR, layer="raw", inplace=True)
+        cykit.asinh_transform(adata, COFACTOR, layer="raw", inplace=True)
     return stained, unstained
 
 
 def _window(tubes, make_napari_viewer, **kwargs):
-    from cytopy.compensation import CompensationWindow
+    from cykit.compensation import CompensationWindow
 
     stained, unstained = tubes
     return CompensationWindow(
@@ -56,21 +56,21 @@ def test_without_a_matrix_it_opens_on_the_gating_step_with_the_identity(tubes, m
 
 def test_gates_are_written_on_the_control_and_never_on_the_unstained(tubes, make_napari_viewer):
     stained, unstained = tubes
-    before = list(unstained.obs.columns), repr(unstained.uns.get("cytopy", {}).get("gates"))
+    before = list(unstained.obs.columns), repr(unstained.uns.get("cykit", {}).get("gates"))
     win = _window(tubes, make_napari_viewer)
     mask = win.apply_gate("positive", POSITIVE)
 
     control = stained[FLUOR[0]]
-    raw = np.asarray(control.layers["raw"][:, cytopy.find_channel_name(control, FLUOR[0])])
+    raw = np.asarray(control.layers["raw"][:, cykit.find_channel_name(control, FLUOR[0])])
     assert np.array_equal(mask, raw > 1000.0)
     assert np.array_equal(control.obs["positive"].to_numpy(), mask)
-    record = cytopy.gate_record(control, "positive")
+    record = cykit.gate_record(control, "positive")
     assert record.kind == "histogram" and record.x == FLUOR[0] and record.layer == "asinh"
     # Recorded so that the generic machinery recomputes the same events.
-    assert np.array_equal(cytopy.gate_mask(control, "positive"), mask)
+    assert np.array_equal(cykit.gate_mask(control, "positive"), mask)
     assert (
         list(unstained.obs.columns),
-        repr(unstained.uns.get("cytopy", {}).get("gates")),
+        repr(unstained.uns.get("cykit", {}).get("gates")),
     ) == before
 
 
@@ -114,7 +114,7 @@ def test_compute_waits_for_every_control_then_matches_the_function(tubes, make_n
     assert win.compute() is live
     assert win.source == "computed" and win.step == "check compensation"
     # The unstained plays no part: the same call without it gives the same matrix.
-    expected = cytopy.compute_spillover_matrix(
+    expected = cykit.compute_spillover_matrix(
         stained, positive_gate="positive", negative_gate="negative"
     )
     assert np.allclose(live.to_numpy(), expected.to_numpy())
@@ -153,8 +153,8 @@ def test_the_check_plots_show_the_controls_compensated_by_the_table(
     inverse = np.linalg.inv(win.spillover.to_numpy())
     shown = win.compensated(control, FLUOR[1], inverse)
 
-    by_hand = cytopy.compensate(control, win.spillover)
-    j = cytopy.find_channel_name(control, FLUOR[1])
+    by_hand = cykit.compensate(control, win.spillover)
+    j = cykit.find_channel_name(control, FLUOR[1])
     expected = np.arcsinh(np.asarray(by_hand.layers["comp"][:, j], dtype=float) / COFACTOR)
     rows = win._rows[id(control)]
     expected = expected if rows is None else expected[rows]
@@ -346,7 +346,7 @@ def test_two_plots_show_what_was_picked_and_follow_the_matrix(
 
 
 def test_the_unstained_can_be_hidden_without_moving_the_axis(tubes, make_napari_viewer):
-    from cytopy.compensation import _NEGATIVE
+    from cykit.compensation import _NEGATIVE
 
     win = _window(tubes, make_napari_viewer)
     win.apply_gate("negative", NEGATIVE)
@@ -392,7 +392,7 @@ def test_a_gate_can_be_put_back_adjusted_and_replaced(tubes, make_napari_viewer)
     assert win.editing is None
     assert win.w_status.value.startswith("replaced")
     control = stained[FLUOR[0]]
-    shown = np.asarray(control.layers["asinh"][:, cytopy.find_channel_name(control, FLUOR[0])])
+    shown = np.asarray(control.layers["asinh"][:, cykit.find_channel_name(control, FLUOR[0])])
     assert np.array_equal(mask, (shown >= narrower[0]) & (shown <= narrower[1]))
     assert np.array_equal(control.obs["positive"].to_numpy(), mask)
 
@@ -418,7 +418,7 @@ def test_a_gate_can_be_deleted(tubes, make_napari_viewer):
     win.delete_gate("negative")
     control = stained[FLUOR[0]]
     assert "negative" not in control.obs
-    assert "negative" not in control.uns["cytopy"]["gates"]
+    assert "negative" not in control.uns["cykit"]["gates"]
     assert "positive" in control.obs
     assert win.gate_state(FLUOR[0]) == (True, False)
     assert len(win.bands.data) == 1
@@ -453,12 +453,12 @@ def test_a_control_can_take_its_negative_from_the_unstained(tubes, make_napari_v
     win.w_use_unstained.value = True  # the checkbox goes through set_use_unstained
     assert win.uses_unstained(FLUOR[1])
     assert win.gate_state(FLUOR[1]) == (True, True)
-    assert stained[FLUOR[1]].uns["cytopy"]["use_unstained"] is True  # kept for next time
+    assert stained[FLUOR[1]].uns["cykit"]["use_unstained"] is True  # kept for next time
     assert "negative: unstained" in " ".join(win.labels.text.values)
     assert "unstained" not in unstained.obs.columns  # nothing is written on the tube
 
     assert win.compute() is win.spillover
-    expected = cytopy.compute_spillover_matrix(
+    expected = cykit.compute_spillover_matrix(
         stained,
         unstained=unstained,
         positive_gate="positive",
@@ -466,7 +466,7 @@ def test_a_control_can_take_its_negative_from_the_unstained(tubes, make_napari_v
         use_unstained=[FLUOR[1]],
     )
     assert np.allclose(win.spillover.to_numpy(), expected.to_numpy())
-    assert win.spillover.attrs["cytopy"]["controls"][FLUOR[1]]["negative"] == "unstained (chosen)"
+    assert win.spillover.attrs["cykit"]["controls"][FLUOR[1]]["negative"] == "unstained (chosen)"
 
     win.set_focus(FLUOR[1], FLUOR[2])
     assert "pos − neg" in win.w_status.value
@@ -481,7 +481,7 @@ def test_unticking_puts_the_controls_own_gate_back(tubes, make_napari_viewer):
     assert "negative" in win.controls[FLUOR[0]].obs  # ... but it is kept
     win.set_use_unstained(False)
     assert not win.uses_unstained(FLUOR[0])
-    assert "use_unstained" not in win.controls[FLUOR[0]].uns["cytopy"]
+    assert "use_unstained" not in win.controls[FLUOR[0]].uns["cykit"]
     assert len(win.bands.data) == 2
     assert win.w_use_unstained.value is False
 
@@ -516,7 +516,7 @@ def _median_columns(win):
 
 
 def _shown(adata, detector):
-    return np.asarray(adata.layers["asinh"][:, cytopy.find_channel_name(adata, detector)], float)
+    return np.asarray(adata.layers["asinh"][:, cykit.find_channel_name(adata, detector)], float)
 
 
 def test_each_gate_shows_its_median(tubes, make_napari_viewer):
@@ -649,7 +649,7 @@ def test_the_plots_grow_to_the_finer_bins(tubes, true_spillover, make_napari_vie
 def test_highlighted_cells_have_readable_text(tubes, true_spillover, make_napari_viewer):
     from qtpy.QtGui import QColor
 
-    from cytopy.compensation import _CELL_TEXT
+    from cykit.compensation import _CELL_TEXT
 
     stained, _ = tubes
     _with_file_matrix(stained, true_spillover)
@@ -695,7 +695,7 @@ def test_each_cell_has_its_own_minus_and_plus(tubes, true_spillover, make_napari
 
 def test_the_matrix_is_square_over_exactly_the_controls(tubes, true_spillover, make_napari_viewer):
     """A file matrix covers the whole panel; a detector nobody stained just drops out."""
-    from cytopy.compensation import CompensationWindow
+    from cykit.compensation import CompensationWindow
 
     stained, unstained = tubes
     _with_file_matrix(stained, true_spillover)
@@ -714,20 +714,20 @@ def test_the_matrix_is_square_over_exactly_the_controls(tubes, true_spillover, m
     _gate_everything(win)
     win.compute()
     assert list(win.spillover.index) == FLUOR[:2]
-    expected = cytopy.compute_spillover_matrix(
+    expected = cykit.compute_spillover_matrix(
         partial, positive_gate="positive", negative_gate="negative"
     )
     assert np.allclose(win.spillover.to_numpy(), expected.to_numpy())
 
     # Applied, the dropped channel is left exactly as acquired.
     control = stained[FLUOR[2]]
-    compensated = cytopy.compensate(control, win.spillover)
-    j = cytopy.find_channel_name(control, FLUOR[2])
+    compensated = cykit.compensate(control, win.spillover)
+    j = cykit.find_channel_name(control, FLUOR[2])
     assert np.array_equal(compensated.layers["comp"][:, j], control.layers["raw"][:, j])
 
 
 def test_a_dropped_detectors_diagonal_does_not_matter(tubes, true_spillover, make_napari_viewer):
-    from cytopy.compensation import CompensationWindow
+    from cykit.compensation import CompensationWindow
 
     stained, unstained = tubes
     odd = np.array(true_spillover, copy=True)

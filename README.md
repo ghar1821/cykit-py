@@ -1,4 +1,4 @@
-# cytopy
+# cykit-py
 
 Cytometry analysis on [AnnData](https://anndata.readthedocs.io), gated
 interactively in [napari](https://napari.org).
@@ -17,20 +17,20 @@ uv pip install -e ".[gui,dev]"
 ## Use
 
 ```python
-import cytopy
+import cykit
 
-adata = cytopy.read_fcs("sample.fcs")        # events x channels, + layers["raw"]
-cytopy.compensate(adata, inplace=True)       # -> adata.layers["comp"]
-cytopy.asinh_transform(adata, cofactor=150,  # -> adata.layers["asinh"]
+adata = cykit.read_fcs("sample.fcs")        # events x channels, + layers["raw"]
+cykit.compensate(adata, inplace=True)       # -> adata.layers["comp"]
+cykit.asinh_transform(adata, cofactor=150,  # -> adata.layers["asinh"]
                        layer="comp", inplace=True)
 
-cytopy.open_napari(adata, "asinh", x="CD3", y="CD19")   # or pick them in the window
+cykit.open_napari(adata, "asinh", x="CD3", y="CD19")   # or pick them in the window
 ```
 
 or from a terminal:
 
 ```bash
-cytopy sample.fcs --compensate --asinh --cofactor 150 -x CD3 -y CD19
+cykit sample.fcs --compensate --asinh --cofactor 150 -x CD3 -y CD19
 ```
 
 ### Compensation
@@ -42,17 +42,17 @@ same square DataFrame indexed by detector, with `1` on the diagonal:
 ```python
 import pandas as pd
 
-cytopy.compensate(adata, inplace=True)                  # 1. the file's own $SPILLOVER
+cykit.compensate(adata, inplace=True)                  # 1. the file's own $SPILLOVER
 
 # 2. exported by other software: read the CSV yourself, pass the frame
-cytopy.compensate(adata, pd.read_csv("matrix.csv", index_col=0), inplace=True)
+cykit.compensate(adata, pd.read_csv("matrix.csv", index_col=0), inplace=True)
 
 # 3. single-stain controls: you say which file stains which detector
-controls = {"CD3 (FITC-A)": cytopy.read_fcs("controls/FITC-A.fcs"),
-            "CD19 (PE-A)": cytopy.read_fcs("controls/PE-A.fcs")}
-unstained = cytopy.read_fcs("controls/Unstained.fcs")
-spill = cytopy.compute_spillover_matrix(controls, unstained=unstained)
-cytopy.compensate(adata, spill, inplace=True)
+controls = {"CD3 (FITC-A)": cykit.read_fcs("controls/FITC-A.fcs"),
+            "CD19 (PE-A)": cykit.read_fcs("controls/PE-A.fcs")}
+unstained = cykit.read_fcs("controls/Unstained.fcs")
+spill = cykit.compute_spillover_matrix(controls, unstained=unstained)
+cykit.compensate(adata, spill, inplace=True)
 ```
 
 **From single-stain controls.** `compute_spillover_matrix` implements the
@@ -66,15 +66,15 @@ corrected at once.
 
 Gating the controls is two windows, one after the other.
 
-**1. Clean up the controls** in [`cytopy.open_napari`](#gating), the same window
+**1. Clean up the controls** in [`cykit.open_napari`](#gating), the same window
 you use on a sample. It takes the whole dict at once, pooled into one object
 with a `sample` column:
 
 ```python
 everything = {**controls, "unstained": unstained}
-pooled = cytopy.open_napari(everything, "asinh")   # draw cells, then singlets, on all samples
+pooled = cykit.open_napari(everything, "asinh")   # draw cells, then singlets, on all samples
 
-gated = cytopy.subset_controls(cytopy.split_samples(pooled), "singlets")
+gated = cykit.subset_controls(cykit.split_samples(pooled), "singlets")
 unstained = gated.pop("unstained")
 ```
 
@@ -88,8 +88,8 @@ gate was drawn.
 compensation window:
 
 ```python
-spill = cytopy.open_napari_compensation(gated, unstained, "asinh")
-cytopy.compensate(adata, spill, inplace=True)
+spill = cykit.open_napari_compensation(gated, unstained, "asinh")
+cykit.compensate(adata, spill, inplace=True)
 ```
 
 It has two steps, switched with the **step** box.
@@ -113,7 +113,7 @@ cells, same autofluorescence. Tick **use unstained as negative** to take it from
 the whole unstained tube instead, which is what a control without usable
 negatives of its own (beads that are all positive) needs. There is nothing to draw
 then: the whole tube is the negative, and a red line marks its median. It is per control and
-recorded on it (`uns["cytopy"]["use_unstained"]`), so it is still set when you
+recorded on it (`uns["cykit"]["use_unstained"]`), so it is still set when you
 reopen the window. A negative gate the control already has is kept but not
 used, and unticking puts it back. The **control** list marks
 each one `●` once it has both gates, and `n`/`p` step through them. Gates
@@ -186,7 +186,7 @@ The window writes nothing but the gates: `obs["positive"]` and
 can be recomputed without the window:
 
 ```python
-spill = cytopy.compute_spillover_matrix(
+spill = cykit.compute_spillover_matrix(
     gated, positive_gate="positive", negative_gate="negative",
     unstained=unstained, use_unstained=["CD8 (APC-A)"],   # only if you ticked any
 )
@@ -210,8 +210,8 @@ coefficient is an assignment.
 
 ```python
 spill.loc["CD3 (FITC-A)", "CD19 (PE-A)"] = 0.13
-control = cytopy.compensate(controls["CD3 (FITC-A)"], spill)
-cytopy.plot_biaxial(control, "CD3 (FITC-A)", "CD19 (PE-A)", layer="comp", cofactor=150)
+control = cykit.compensate(controls["CD3 (FITC-A)"], spill)
+cykit.plot_biaxial(control, "CD3 (FITC-A)", "CD19 (PE-A)", layer="comp", cofactor=150)
 ```
 
 **From a CSV.** There is no reader for this: `compensate` takes a DataFrame, and
@@ -229,7 +229,7 @@ a **compensation** matrix — the inverse — invert it yourself with
 From the terminal:
 
 ```bash
-cytopy sample.fcs --compensate --asinh          # the file's own $SPILLOVER
+cykit sample.fcs --compensate --asinh          # the file's own $SPILLOVER
 ```
 
 Any other matrix is a Python job, not a flag — reading a foreign CSV and saying
@@ -244,10 +244,10 @@ per-point scatter is neither fast nor readable, and the structure is where
 events pile up.
 
 ```python
-cytopy.plot_biaxial(adata, "CD3", "CD19", layer="asinh")      # density
-cytopy.plot_biaxial(adata, "CD3", "CD19", layer="asinh", color_by="lymphs")  # a gate over a density
-cytopy.plot_biaxial(adata, "CD3", "CD19", layer="raw", cofactor=150)        # display-only arcsinh
-cytopy.plot_gate(adata, "lymphocytes")                        # redraw a gate where it was drawn
+cykit.plot_biaxial(adata, "CD3", "CD19", layer="asinh")      # density
+cykit.plot_biaxial(adata, "CD3", "CD19", layer="asinh", color_by="lymphs")  # a gate over a density
+cykit.plot_biaxial(adata, "CD3", "CD19", layer="raw", cofactor=150)        # display-only arcsinh
+cykit.plot_gate(adata, "lymphocytes")                        # redraw a gate where it was drawn
 ```
 
 Axes are labelled in raw units whenever the layer records the transform that
@@ -285,8 +285,8 @@ by default and leave the object you passed alone. Pass `inplace=True` to build
 the layers up on one object, which is what a pipeline usually wants:
 
 ```python
-cytopy.compensate(adata, spill, inplace=True)              # adata gains layers["comp"]
-comped = cytopy.compensate(adata, spill)                   # adata untouched
+cykit.compensate(adata, spill, inplace=True)              # adata gains layers["comp"]
+comped = cykit.compensate(adata, spill)                   # adata untouched
 ```
 
 The default is the safe one on purpose: a call whose result you forget to
@@ -324,7 +324,7 @@ of each with its own slider — and hands back a dict. It writes nothing to the
 AnnData; applying the answer is still your own `asinh_transform`.
 
 ```python
-cofactors = cytopy.open_napari_transform(
+cofactors = cykit.open_napari_transform(
     adata, "comp", cofactor_range=(100, 20_000),
 )
 cofactors
@@ -333,7 +333,7 @@ cofactors
 #     'CD8 (BV510-A)': 3000,
 # }
 
-cytopy.asinh_transform(adata, cofactors, layer="comp", inplace=True)
+cykit.asinh_transform(adata, cofactors, layer="comp", inplace=True)
 ```
 
 What comes back is a `Cofactors`, which is a dict of channel to cofactor and
@@ -407,10 +407,10 @@ channels they share and become entries in the **sample** selector, so one
 window browses the lot:
 
 ```python
-cytopy.open_napari([run1, run2, run3], "asinh")            # AnnData you already have
-cytopy.open_napari({"healthy": run1, "treated": run2}, "asinh")  # name them yourself
-cytopy.open_napari("data/", "raw")                         # every FCS in a directory
-cytopy.open_napari(["a.fcs", "b.h5ad"], "raw")             # paths work too
+cykit.open_napari([run1, run2, run3], "asinh")            # AnnData you already have
+cykit.open_napari({"healthy": run1, "treated": run2}, "asinh")  # name them yourself
+cykit.open_napari("data/", "raw")                         # every FCS in a directory
+cykit.open_napari(["a.fcs", "b.h5ad"], "raw")             # paths work too
 ```
 
 Two files called the same thing stay two entries (`demo`, `demo.1`) rather than
@@ -433,13 +433,13 @@ it kept.
 ### Gating
 
 ```python
-cytopy.open_napari(adata, "asinh")   # opens napari; returns the data when you close it
+cykit.open_napari(adata, "asinh")   # opens napari; returns the data when you close it
 ```
 
 Gate as many times as you like in the one window: draw, apply, change the
 channels, set **parent gate** to what you just drew, gate again. Each gate is a
 boolean column in `adata.obs` and an outline in
-`adata.uns["cytopy"]["gates"]`. Call it again on the same object and those gates
+`adata.uns["cykit"]["gates"]`. Call it again on the same object and those gates
 come back with it.
 
 ### In the viewer
@@ -458,8 +458,8 @@ come back with it.
   back editable, and applying it again replaces it. **Its children are
   recomputed**, so a hierarchy stays consistent when you move a parent. *delete
   gate* removes it and everything nested inside it.
-* Outside the viewer, `cytopy.gate_mask(adata, name)` recomputes a gate from
-  the outline it was drawn with, and `cytopy.recompute_gates(adata, name)`
+* Outside the viewer, `cykit.gate_mask(adata, name)` recomputes a gate from
+  the outline it was drawn with, and `cykit.recompute_gates(adata, name)`
   brings its descendants back in line.
 * The **gates** layer is always kept on top — a gate you cannot see is a gate
   you cannot adjust.
@@ -504,7 +504,7 @@ come back with it.
 ### Exporting a gating hierarchy
 
 ```python
-cytopy.gating_pdf(adata, "gating.pdf")
+cykit.gating_pdf(adata, "gating.pdf")
 ```
 
 A contents page with the tree — every gate, its count, its share of its parent
@@ -514,7 +514,7 @@ kept picked out. Gates come out parents first, so the pages read the way the
 gating was done.
 
 Gate provenance (channels, layer, parent, counts) is kept in
-`adata.uns["cytopy"]["gates"]`.
+`adata.uns["cykit"]["gates"]`.
 
 ## Data model
 
@@ -533,13 +533,13 @@ Gate provenance (channels, layer, parent, counts) is kept in
 | `adata.uns["fcs"]` | the raw FCS TEXT keywords |
 | `adata.uns["spillover"]` | `$SPILLOVER` as a DataFrame, as the file wrote it |
 | `adata.uns["timestep"]` | `$TIMESTEP`, when the file gives one |
-| `adata.uns["cytopy"]["gates"]` | one record per gate: channels, layer, parent, outline |
-| `adata.uns["cytopy"]["asinh_layers"]` | the cofactors behind *each* arcsinh layer, for the axis ticks |
-| `adata.uns["cytopy"]["logicle_layers"]` | the `T`/`W`/`M`/`A` behind each logicle layer |
-| `adata.uns["cytopy"]["asinh_layer"]`, `["logicle_layer"]` | the layer each transform wrote most recently |
-| `adata.uns["cytopy"]["logicle_params"]` | the logicle parameters of the most recent call |
-| `adata.uns["cytopy"]["compensated_layer"]` | which layer `compensate` last wrote |
-| `adata.uns["cytopy"]["spillover_source"]` | where the applied matrix came from |
+| `adata.uns["cykit"]["gates"]` | one record per gate: channels, layer, parent, outline |
+| `adata.uns["cykit"]["asinh_layers"]` | the cofactors behind *each* arcsinh layer, for the axis ticks |
+| `adata.uns["cykit"]["logicle_layers"]` | the `T`/`W`/`M`/`A` behind each logicle layer |
+| `adata.uns["cykit"]["asinh_layer"]`, `["logicle_layer"]` | the layer each transform wrote most recently |
+| `adata.uns["cykit"]["logicle_params"]` | the logicle parameters of the most recent call |
+| `adata.uns["cykit"]["compensated_layer"]` | which layer `compensate` last wrote |
+| `adata.uns["cykit"]["spillover_source"]` | where the applied matrix came from |
 
 All of it round-trips through `adata.write_h5ad(...)` — gates, transform
 parameters and the spillover DataFrame all come back as they went in.
@@ -563,7 +563,7 @@ which. Nothing is inverted on the way in; that is `compensate`'s job.
 
 ## Scales
 
-`cytopy.scales` implements the logicle / biexponential transform of
+`cykit.scales` implements the logicle / biexponential transform of
 Moore & Parks (2012) with the standard `T`, `W`, `M`, `A` parameters, plus
 arcsinh, log and linear. Each scale maps data to display coordinates, back
 again, and knows where its decade ticks go. `PretransformedScale` is the one
@@ -577,9 +577,9 @@ population.
 
 ## API reference
 
-Everything below is on the top-level `cytopy` namespace. The names under
+Everything below is on the top-level `cykit` namespace. The names under
 *windows* are the only ones that need napari, and they are imported on first
-use, so `import cytopy` in a script that never opens a window never loads Qt.
+use, so `import cykit` in a script that never opens a window never loads Qt.
 
 ### Reading files
 

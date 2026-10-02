@@ -66,7 +66,7 @@ def pad_range(lo: float, hi: float, frac: float = AXIS_MARGIN) -> tuple[float, f
 class Ticks:
     """Where an axis's ticks go, in *display* coordinates.
 
-    Parameters
+    Attributes
     ----------
     major
         Positions of the labelled ticks, ascending.
@@ -353,7 +353,7 @@ class LogScale(Scale):
 class AsinhScale(Scale):
     """``asinh(x / cofactor)``: linear near zero, logarithmic far from it.
 
-    Parameters
+    Attributes
     ----------
     cofactor
         Width of the linear region. Roughly, values well inside ``+/-
@@ -407,7 +407,7 @@ class LogicleScale(Scale):
     Parameters follow Moore & Parks (2012). Display coordinates run from 0 to
     1 across the full scale.
 
-    Parameters
+    Attributes
     ----------
     T
         Top of scale, i.e. the largest data value the axis should reach.
@@ -552,7 +552,7 @@ class PretransformedScale(Scale):
     decade ticks of the *original* units land, so an arcsinh-transformed
     channel still gets an axis labelled 0, 10², 10³, ... in raw units.
 
-    Parameters
+    Attributes
     ----------
     inner
         The transform that was already applied to the values. Consulted only

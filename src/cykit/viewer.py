@@ -781,14 +781,14 @@ class CytoViewer:
             return (float(axes.x_lo), float(axes.x_hi))
         return (float(axes.y_lo), float(axes.y_hi))
 
-    def _clip_changed(self, *_) -> None:
+    def _clip_changed(self) -> None:
         """Turn the percentile clip on or off and refit."""
         if self._updating:
             return
         self._robust = bool(self.w_clip.value)
         self._autoscale_clicked()
 
-    def _autoscale_clicked(self, *_) -> None:
+    def _autoscale_clicked(self) -> None:
         """Drop both manual ranges and refit to the data."""
         self.panel.x_lim = None
         self.panel.y_lim = None
@@ -944,7 +944,7 @@ class CytoViewer:
         self._travel_cache[key] = bounds
         return bounds
 
-    def _panel_changed(self, *_) -> None:
+    def _panel_changed(self) -> None:
         """Copy the per-panel widgets onto the active panel."""
         if self._updating:
             return
@@ -1220,7 +1220,7 @@ class CytoViewer:
         return f"{n:,} events   ({panel.x} × {panel.y}){peak}"
 
     # -------------------------------------------------------------- rendering
-    def refresh(self, *_) -> None:
+    def refresh(self) -> None:
         """Redraw every panel, and the decorations that go round them."""
         if self._updating:
             return
@@ -1419,12 +1419,12 @@ class CytoViewer:
         }
 
     # --------------------------------------------------------------- callbacks
-    def _on_change(self, *_):
+    def _on_change(self):
         if self._updating:
             return
         self.refresh()
 
-    def _swap(self, *_):
+    def _swap(self):
         self.set_plot(x=self.panel.y, y=self.panel.x)
 
     # ------------------------------------------------------------------ gating
@@ -1435,8 +1435,6 @@ class CytoViewer:
         ----------
         shape
             ``(n, 2)`` vertices in canvas coordinates.
-        panel
-            Which panel's axes to read them against; the active one by default.
 
         Returns
         -------
@@ -1453,8 +1451,6 @@ class CytoViewer:
         ----------
         x, y
             Data values.
-        panel
-            Which panel; the active one by default.
 
         Returns
         -------
@@ -1670,7 +1666,7 @@ class CytoViewer:
             self.w_parent.reset_choices()
             self.w_gate_pick.reset_choices()
 
-    def _load_gate_clicked(self, *_) -> None:
+    def _load_gate_clicked(self) -> None:
         name = str(self.w_gate_pick.value)
         if name == "<none>":
             self.w_status.value = "pick a gate to edit first"
@@ -1680,7 +1676,7 @@ class CytoViewer:
         except KeyError as exc:
             self.w_status.value = str(exc).strip("'")
 
-    def _delete_gate_clicked(self, *_) -> None:
+    def _delete_gate_clicked(self) -> None:
         name = str(self.w_gate_pick.value)
         if name == "<none>":
             self.w_status.value = "pick a gate to delete first"
@@ -1688,7 +1684,7 @@ class CytoViewer:
         gone = self.delete_gate(name)
         self.w_status.value = f"deleted {', '.join(gone)}"
 
-    def _apply_gate(self, *_):
+    def _apply_gate(self):
         name = (self.w_gate_name.value or "").strip()
         if not name:
             self.w_status.value = "give the gate a name first"

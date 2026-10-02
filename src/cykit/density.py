@@ -19,7 +19,7 @@ class Axes2D:
     values being plotted) or in *pixel* coordinates (napari world coordinates,
     ``(row, col)``).
 
-    Parameters
+    Attributes
     ----------
     x_lo, x_hi
         Display-coordinate range spanned by the horizontal axis.

@@ -7,7 +7,7 @@ name = "cykit-py"
 version = "0.0.1-alpha"
 description = "Interactive cytometry analysis: FCS -> AnnData -> napari gating"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.11,<3.14"
 license = { text = "BSD-3-Clause" }
 authors = [{ name = "Givanna Putri", email = "putri.g@wehi.edu.au" }]
 dependencies = [

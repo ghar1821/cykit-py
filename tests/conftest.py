@@ -1,10 +1,29 @@
 import contextlib
+import os
 import sys
 from pathlib import Path
 
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "examples"))
+
+
+def pytest_collection_modifyitems(config, items):
+    """Skip every test that opens a napari window when there is no OpenGL.
+
+    napari's canvas queries OpenGL as soon as a viewer is built, and on a
+    machine without a usable context (GitHub's runners) that is a
+    segfault, not an exception, so it takes the whole run down. Every window in
+    the suite comes from ``make_napari_viewer``, directly or through another
+    fixture, so that is what we key on. Only on GitHub Actions: a local run
+    always opens the windows.
+    """
+    if os.environ.get("GITHUB_ACTIONS") != "true":
+        return
+    skip = pytest.mark.skip(reason="no OpenGL context on this CI runner")
+    for item in items:
+        if "make_napari_viewer" in getattr(item, "fixturenames", ()):
+            item.add_marker(skip)
 
 
 @pytest.fixture(scope="session")

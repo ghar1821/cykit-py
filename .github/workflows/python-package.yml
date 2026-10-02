@@ -45,10 +45,4 @@ jobs:
       env:
         QT_QPA_PLATFORM: offscreen
       run: |
-        if [ "$RUNNER_OS" = "Linux" ]; then
-          pytest
-        else
-          # napari needs an OpenGL context, which macOS/Windows runners lack: the window tests segfault
-          pytest --ignore=tests/test_viewer.py --ignore=tests/test_cofactor_window.py --ignore=tests/test_compensation_window.py
-        fi
-      shell: bash
+        pytest

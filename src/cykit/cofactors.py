@@ -835,19 +835,19 @@ class CofactorWindow:
             return
         self.set_cofactor(channel, value)
 
-    def _x_changed(self, *_) -> None:
+    def _x_changed(self) -> None:
         if not self._updating:
             self.set_channels(x=str(self.w_x.value))
 
-    def _y_changed(self, *_) -> None:
+    def _y_changed(self) -> None:
         if not self._updating:
             self.set_channels(y=str(self.w_y.value))
 
-    def _margin_changed(self, *_) -> None:
+    def _margin_changed(self) -> None:
         if not self._updating:
             self.set_margin(int(self.w_margin.value) / 100.0)
 
-    def _ticks_changed(self, *_) -> None:
+    def _ticks_changed(self) -> None:
         if not self._updating:
             self._ticks = str(self.w_ticks.value)
             self.refresh()
@@ -874,7 +874,7 @@ class CofactorWindow:
                 f"{value:g} is outside {lo:g}-{hi:g} - clamped to {self.cofactors[channel]:g}"
             )
 
-    def _all_entered(self, *_) -> None:
+    def _all_entered(self) -> None:
         text = str(self.w_all.value).strip()
         if not text:
             return
@@ -893,7 +893,7 @@ class CofactorWindow:
         if not lo <= value <= hi:
             self.w_status.value = f"{value:g} is outside {lo:g}–{hi:g} — clamped to {applied:g}"
 
-    def _copy(self, *_) -> None:
+    def _copy(self) -> None:
         from qtpy.QtWidgets import QApplication
 
         clipboard = QApplication.clipboard()
@@ -901,7 +901,7 @@ class CofactorWindow:
             clipboard.setText(self.cofactors.to_source())
         self.w_status.value = "copied — paste it into your notebook"
 
-    def _set_tracking(self, *_) -> None:
+    def _set_tracking(self) -> None:
         for slider in (self.w_cx, self.w_cy):
             slider.tracking = bool(self.w_live.value)
 
@@ -931,7 +931,7 @@ class CofactorWindow:
         return data
 
     # -------------------------------------------------------------- rendering
-    def refresh(self, *_) -> None:
+    def refresh(self) -> None:
         """Redraw all three panels, the frame and the guides."""
         if self._updating or self._drawing:
             # Qt will deliver the next slider value anyway, so a dropped frame

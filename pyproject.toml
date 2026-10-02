@@ -7,7 +7,7 @@ name = "cykit-py"
 version = "0.0.1-alpha"
 description = "Interactive cytometry analysis: FCS -> AnnData -> napari gating"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11,<3.14"
 license = { text = "BSD-3-Clause" }
 authors = [{ name = "Givanna Putri", email = "putri.g@wehi.edu.au" }]
 dependencies = [
@@ -22,7 +22,7 @@ dependencies = [
 
 [project.optional-dependencies]
 gui = ["napari[pyqt6]>=0.5", "magicgui>=0.8", "qtpy"]
-dev = ["pytest>=7", "pytest-qt>=4.4", "ruff"]
+dev = ["pytest>=7", "pytest-qt>=4.4", "ruff", "numpydoc>=1.8"]
 
 [project.scripts]
 cykit = "cykit.__main__:main"
@@ -32,3 +32,14 @@ packages = ["src/cykit"]
 
 [tool.ruff]
 line-length = 100
+
+[tool.numpydoc_validation]
+# Every public object has a docstring (GL08) that documents exactly its
+# parameters (PR01 missing, PR02 unknown). The Scale transform methods are
+# documented once, on cykit.scales.Scale. Private names (any part starting with
+# "_", which includes dunders and __init__) are not checked.
+checks = ["GL08", "PR01", "PR02"]
+exclude = [
+    '(^|\.)_',
+    '\.(forward|inverse|ticks|limits|to_raw|from_raw)$',
+]

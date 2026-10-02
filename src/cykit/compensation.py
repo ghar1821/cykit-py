@@ -584,9 +584,9 @@ class CompensationWindow:
         self.w_reset.setToolTip(
             "Put back the matrix the window started from, or the last one computed."
         )
-        self.w_reset.clicked.connect(lambda *_: self.reset())
+        self.w_reset.clicked.connect(self.reset)
         self.w_copy = QPushButton("copy as Python")
-        self.w_copy.clicked.connect(lambda *_: self._copy())
+        self.w_copy.clicked.connect(self._copy)
         buttons = QHBoxLayout()
         buttons.addWidget(self.w_reset)
         buttons.addWidget(self.w_copy)
@@ -878,7 +878,7 @@ class CompensationWindow:
             self.w_unstained.value = self.show_unstained
         self.refresh()
 
-    def _use_unstained_toggled(self, *_) -> None:
+    def _use_unstained_toggled(self) -> None:
         if self._updating:
             return
         try:
@@ -888,7 +888,7 @@ class CompensationWindow:
             with self._quiet():
                 self.w_use_unstained.value = False
 
-    def _unstained_toggled(self, *_) -> None:
+    def _unstained_toggled(self) -> None:
         if not self._updating:
             self.set_show_unstained(self.w_unstained.value)
 
@@ -1090,24 +1090,24 @@ class CompensationWindow:
         return resolved
 
     # --------------------------------------------------------------- callbacks
-    def _step_changed(self, *_) -> None:
+    def _step_changed(self) -> None:
         if not self._updating:
             self.set_step(self.w_step.value)
 
-    def _control_changed(self, *_) -> None:
+    def _control_changed(self) -> None:
         if not self._updating and self.w_control.value is not None:
             self.set_control(self.w_control.value)
 
-    def _target_changed(self, *_) -> None:
+    def _target_changed(self) -> None:
         if not self._updating and self.editing is not None:
             self._stop_editing()
             self.refresh()
 
-    def _view_changed(self, *_) -> None:
+    def _view_changed(self) -> None:
         if not self._updating:
             self.set_view(self.w_view.value)
 
-    def _scatter_changed(self, *_) -> None:
+    def _scatter_changed(self) -> None:
         if not self._updating:
             self.set_scatter(self.w_scatter.value)
 
@@ -1120,7 +1120,7 @@ class CompensationWindow:
             _, x, y = self.w_pair[i]
             self.set_pair(i, x=x.value, y=y.value)
 
-    def _cell_focused(self, row: int, col: int, *_) -> None:
+    def _cell_focused(self, row: int, col: int) -> None:
         if self._filling or row < 0 or col < 0:
             return
         names = list(self.spillover.index)
@@ -1135,28 +1135,28 @@ class CompensationWindow:
         if tile is not None:
             self.set_focus(*tile)
 
-    def _apply_clicked(self, *_) -> None:
+    def _apply_clicked(self) -> None:
         try:
             self.apply_gate(self.w_target.value)
         except ValueError as exc:
             self.w_status.value = str(exc)
 
-    def _adjust_clicked(self, *_) -> None:
+    def _adjust_clicked(self) -> None:
         try:
             self.adjust_gate(self.w_target.value)
         except ValueError as exc:
             self.w_status.value = str(exc)
 
-    def _delete_clicked(self, *_) -> None:
+    def _delete_clicked(self) -> None:
         try:
             self.delete_gate(self.w_target.value)
         except ValueError as exc:
             self.w_status.value = str(exc)
 
-    def _compute_clicked(self, *_) -> None:
+    def _compute_clicked(self) -> None:
         self.compute()
 
-    def _fit_clicked(self, *_) -> None:
+    def _fit_clicked(self) -> None:
         self._limits.clear()
         self.ranges = [{"x": [None, None], "y": [None, None]} for _ in self.pair]
         self.refresh()
@@ -1657,7 +1657,7 @@ class CompensationWindow:
         return self.compensated_matrix(adata, inverse)[:, names.index(channel)]
 
     # -------------------------------------------------------------- rendering
-    def refresh(self, *_) -> None:
+    def refresh(self) -> None:
         """Redraw the canvas for the current step."""
         if self._updating:
             return

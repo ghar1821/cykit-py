@@ -13,6 +13,9 @@ jobs:
   build:
 
     runs-on: ${{ matrix.os }}
+    env:
+      # Windows defaults to cp1252 when no encoding is given; read files as UTF-8
+      PYTHONUTF8: "1"
     strategy:
       fail-fast: false
       matrix:
